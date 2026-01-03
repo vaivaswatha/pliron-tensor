@@ -7,9 +7,10 @@ use pliron::{
         SingleBlockRegionInterface, ZeroResultInterface,
     },
     common_traits::Verify,
-    context::{Context, Ptr},
+    context::Context,
     derive::{def_op, derive_op_interface_impl, format_op},
     impl_verify_succ,
+    inserter::OpInserter,
     linked_list::ContainsLinkedList,
     op::Op,
     operation::Operation,
@@ -120,13 +121,21 @@ impl Verify for GenerateOp {
 
 impl GenerateOp {
     /// Creates a new dynamically sized tensor.
-    /// The `initializer_builder` function is called to populate the body of the region.
+    /// The `body_builder` function is called to populate the body of the region.
+    /// It is provided with, as arguments, the current index values and an inserter
+    /// (set to the start of the entry block). It must return the value yielded at that index.
+    /// A [YieldOp] is automatically added at end of the body, taking this value as operand.
     pub fn new<T>(
         ctx: &mut Context,
         dynamic_dimensions: Vec<Value>,
         result_type: TypePtr<RankedTensorType>,
-        initializer_builder: fn(ctx: &mut Context, state: T, entry_block: Ptr<BasicBlock>),
-        initializer_state: T,
+        body_builder: fn(
+            ctx: &mut Context,
+            state: T,
+            inserter: &mut OpInserter,
+            indices: Vec<Value>,
+        ) -> Value,
+        body_builder_state: T,
     ) -> Self {
         let op = Operation::new(
             ctx,
@@ -138,7 +147,7 @@ impl GenerateOp {
         );
         let opop = GenerateOp { op };
 
-        // Populate the region.
+        // Create the initializer region.
         let index_ty = IndexType::get(ctx);
         let rank = result_type.deref(ctx).rank();
         let region = opop.get_region(ctx);
@@ -148,7 +157,13 @@ impl GenerateOp {
             vec![index_ty.into(); rank],
         );
         entry_block.insert_at_front(region, ctx);
-        initializer_builder(ctx, initializer_state, entry_block);
+
+        // Build the body.
+        let indices = entry_block.deref(ctx).arguments().collect();
+        let op_inserter = &mut OpInserter::new_at_block_start(entry_block);
+        let yield_value = body_builder(ctx, body_builder_state, op_inserter, indices);
+        let yield_op = YieldOp::new(ctx, yield_value);
+        op_inserter.append_op(ctx, yield_op);
 
         opop
     }
@@ -165,6 +180,21 @@ impl GenerateOp {
 #[derive_op_interface_impl(ZeroResultInterface, OneOpdInterface, IsTerminatorInterface)]
 pub struct YieldOp;
 impl_verify_succ!(YieldOp);
+
+impl YieldOp {
+    /// Creates a new `YieldOp` with the specified operand.
+    pub fn new(ctx: &mut Context, value: Value) -> Self {
+        let op = Operation::new(
+            ctx,
+            Self::get_concrete_op_info(),
+            vec![],
+            vec![value],
+            vec![],
+            0,
+        );
+        YieldOp { op }
+    }
+}
 
 /// Register ops in the dialect.
 pub fn register(ctx: &mut Context) {
