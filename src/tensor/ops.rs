@@ -4,7 +4,8 @@ use pliron::{
     basic_block::BasicBlock,
     builtin::op_interfaces::{
         IsTerminatorInterface, OneOpdInterface, OneRegionInterface, OneResultInterface,
-        SingleBlockRegionInterface, ZeroResultInterface,
+        SameOperandsAndResultType, SameOperandsType, SameResultsType, SingleBlockRegionInterface,
+        ZeroResultInterface,
     },
     common_traits::Verify,
     context::Context,
@@ -20,6 +21,8 @@ use pliron::{
     value::Value,
     verify_err, verify_error,
 };
+
+use crate::tensor::op_interfaces::BinaryTensorOpInterface;
 
 use super::types::{IndexType, RankedTensorType};
 
@@ -196,8 +199,39 @@ impl YieldOp {
     }
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum AddOpVerifyErr {
+    #[error("AddOp result type must be a RankedTensorType")]
+    InvalidResult,
+}
+
+/// Add two tensors.
+///
+/// ## Operand(s)
+/// | operand | description |
+/// |-----|-------|
+/// | `lhs` | The left-hand side tensor. |
+/// | `rhs` | The right-hand side tensor. |
+///
+/// ## Result(s)
+/// | result | description |
+/// |-----|-------|
+/// | `result` | The resulting tensor, with same shape as the operands. |
+#[def_op("tensor.add")]
+#[format_op("operands(CharSpace(`,`)) ` : ` type($0)")]
+#[derive_op_interface_impl(
+    OneResultInterface,
+    SameResultsType,
+    SameOperandsAndResultType,
+    SameOperandsType,
+    BinaryTensorOpInterface
+)]
+pub struct AddOp;
+impl_verify_succ!(AddOp);
+
 /// Register ops in the dialect.
 pub fn register(ctx: &mut Context) {
     GenerateOp::register(ctx, GenerateOp::parser_fn);
     YieldOp::register(ctx, YieldOp::parser_fn);
+    AddOp::register(ctx, AddOp::parser_fn);
 }
