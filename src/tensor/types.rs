@@ -1,6 +1,7 @@
 //! Tensor types and related functionality.
 
-use combine::Parser;
+use pliron::combine::{self, Parser};
+
 use pliron::{
     builtin::{type_interfaces::FloatTypeInterface, types::IntegerType},
     common_traits::Verify,

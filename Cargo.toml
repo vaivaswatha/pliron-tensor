@@ -5,7 +5,4 @@ edition = "2024"
 
 [dependencies]
 pliron = { git = "https://github.com/vaivaswatha/pliron.git" }
-combine = "4"
 thiserror = "2"
-linkme = "0"
-dyn-clone = "1"

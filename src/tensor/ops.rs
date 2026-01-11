@@ -199,12 +199,6 @@ impl YieldOp {
     }
 }
 
-#[derive(thiserror::Error, Debug)]
-pub enum AddOpVerifyErr {
-    #[error("AddOp result type must be a RankedTensorType")]
-    InvalidResult,
-}
-
 /// Add two tensors.
 ///
 /// ## Operand(s)

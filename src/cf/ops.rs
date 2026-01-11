@@ -1,6 +1,6 @@
 //! Control-flow ops and related functionality.
 
-use combine::{
+use pliron::combine::{
     Parser,
     parser::char::{self, spaces},
 };
