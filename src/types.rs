@@ -2,13 +2,11 @@
 
 use pliron::combine::{self, Parser};
 
-use pliron::derive::derive_type_get;
 use pliron::{
     builtin::{type_interfaces::FloatTypeInterface, types::IntegerType},
     common_traits::Verify,
     context::{Context, Ptr},
     derive::{def_type, format, format_type},
-    impl_verify_succ,
     parsable::Parsable,
     printable::Printable,
     result::Result,
@@ -138,11 +136,3 @@ impl Verify for UnrankedTensorType {
         Ok(())
     }
 }
-
-/// Index type.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[def_type("tensor.index")]
-#[derive_type_get]
-#[format_type]
-pub struct IndexType;
-impl_verify_succ!(IndexType);

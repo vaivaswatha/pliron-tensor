@@ -21,9 +21,10 @@ use pliron::{
     verify_err, verify_error,
 };
 
-use crate::tensor::op_interfaces::BinaryTensorOpInterface;
+use pliron_common_dialects::index::types::IndexType;
 
-use super::types::{IndexType, RankedTensorType};
+use super::types::RankedTensorType;
+use crate::op_interfaces::BinaryTensorOpInterface;
 
 /// Op to generate a tensor by applying a function to generate the value at each index.
 /// See MLIR's [GenerateOp](https://mlir.llvm.org/docs/Dialects/TensorOps/#tensorgenerate-tensorgenerateop).

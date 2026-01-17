@@ -5,4 +5,5 @@ edition = "2024"
 
 [dependencies]
 pliron = { git = "https://github.com/vaivaswatha/pliron.git" }
+pliron-common-dialects = { git = "https://github.com/vaivaswatha/pliron-common-dialects.git" }
 thiserror = "2"

@@ -12,7 +12,7 @@ use pliron::{
     verify_err,
 };
 
-use crate::tensor::types::RankedTensorType;
+use crate::types::RankedTensorType;
 
 /// Error for binary arithmetic tensor ops verification.
 #[derive(thiserror::Error, Debug)]
