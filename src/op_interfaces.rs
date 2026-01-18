@@ -1,7 +1,10 @@
 //! Tensor op interfaces
 
 use pliron::{
-    builtin::op_interfaces::{OneResultInterface, SameOperandsAndResultType},
+    builtin::op_interfaces::{
+        AtLeastNOpdsInterface, AtLeastNResultsInterface, NOpdsInterface, OneResultInterface,
+        SameOperandsAndResultType,
+    },
     context::Context,
     derive::op_interface,
     location::Located,
@@ -24,7 +27,13 @@ pub enum BinArithOpErr {
 }
 
 #[op_interface]
-pub trait BinaryTensorOpInterface: OneResultInterface + SameOperandsAndResultType {
+pub trait BinaryTensorOpInterface:
+    OneResultInterface
+    + SameOperandsAndResultType
+    + NOpdsInterface<2>
+    + AtLeastNResultsInterface<1>
+    + AtLeastNOpdsInterface<1>
+{
     fn verify(op: &dyn Op, ctx: &Context) -> Result<()>
     where
         Self: Sized,

@@ -3,9 +3,10 @@
 use pliron::{
     basic_block::BasicBlock,
     builtin::op_interfaces::{
-        IsTerminatorInterface, OneOpdInterface, OneRegionInterface, OneResultInterface,
-        SameOperandsAndResultType, SameOperandsType, SameResultsType, SingleBlockRegionInterface,
-        ZeroResultInterface,
+        AllResultsOfType, AtLeastNOpdsInterface, AtLeastNResultsInterface, IsTerminatorInterface,
+        NOpdsInterface, NRegionsInterface, NResultsInterface, OneOpdInterface, OneRegionInterface,
+        OneResultInterface, SameOperandsAndResultType, SameOperandsType, SameResultsType,
+        SingleBlockRegionInterface,
     },
     common_traits::Verify,
     context::Context,
@@ -46,7 +47,13 @@ use crate::op_interfaces::BinaryTensorOpInterface;
 ///   yield a single value that matches the element type of the tensor.
 #[def_op("tensor.generate")]
 #[format_op("operands(CharSpace(`,`)) ` : ` type($0) region($0)")]
-#[derive_op_interface_impl(SingleBlockRegionInterface, OneRegionInterface, OneResultInterface)]
+#[derive_op_interface_impl(
+    SingleBlockRegionInterface,
+    OneRegionInterface,
+    NRegionsInterface<1>,
+    OneResultInterface,
+    NResultsInterface<1>
+)]
 pub struct GenerateOp;
 
 #[derive(thiserror::Error, Debug)]
@@ -180,7 +187,7 @@ impl GenerateOp {
 /// | `value` | any type |
 #[def_op("tensor.yield")]
 #[format_op("$0")]
-#[derive_op_interface_impl(ZeroResultInterface, OneOpdInterface, IsTerminatorInterface)]
+#[derive_op_interface_impl(NResultsInterface<0>, OneOpdInterface, NOpdsInterface<1>, IsTerminatorInterface)]
 pub struct YieldOp;
 impl_verify_succ!(YieldOp);
 
@@ -218,7 +225,12 @@ impl YieldOp {
     SameResultsType,
     SameOperandsAndResultType,
     SameOperandsType,
-    BinaryTensorOpInterface
+    BinaryTensorOpInterface,
+    NResultsInterface<1>,
+    NOpdsInterface<2>,
+    AtLeastNOpdsInterface<1>,
+    AtLeastNResultsInterface<1>,
+    AllResultsOfType<RankedTensorType>,
 )]
 pub struct AddOp;
 impl_verify_succ!(AddOp);
