@@ -12,7 +12,7 @@ use pliron::{
     context::Context,
     derive::{def_op, derive_op_interface_impl, format_op},
     impl_verify_succ,
-    inserter::OpInserter,
+    irbuild::{inserter::{IRInserter, Inserter}, listener::InsertionListener},
     linked_list::ContainsLinkedList,
     op::Op,
     operation::Operation,
@@ -135,17 +135,17 @@ impl GenerateOp {
     /// It is provided with, as arguments, the current index values and an inserter
     /// (set to the start of the entry block). It must return the value yielded at that index.
     /// A [YieldOp] is automatically added at end of the body, taking this value as operand.
-    pub fn new<T>(
+    pub fn new<State, L: InsertionListener>(
         ctx: &mut Context,
         dynamic_dimensions: Vec<Value>,
         result_type: TypePtr<RankedTensorType>,
         body_builder: fn(
             ctx: &mut Context,
-            state: T,
-            inserter: &mut OpInserter,
+            state: State,
+            inserter: &mut IRInserter<L>,
             indices: Vec<Value>,
         ) -> Value,
-        body_builder_state: T,
+        body_builder_state: State,
     ) -> Self {
         let op = Operation::new(
             ctx,
@@ -170,7 +170,7 @@ impl GenerateOp {
 
         // Build the body.
         let indices = entry_block.deref(ctx).arguments().collect();
-        let op_inserter = &mut OpInserter::new_at_block_start(entry_block);
+        let op_inserter = &mut IRInserter::new_at_block_start(entry_block);
         let yield_value = body_builder(ctx, body_builder_state, op_inserter, indices);
         let yield_op = YieldOp::new(ctx, yield_value);
         op_inserter.append_op(ctx, yield_op);
