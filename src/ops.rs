@@ -12,7 +12,10 @@ use pliron::{
     context::Context,
     derive::{def_op, derive_op_interface_impl, format_op},
     impl_verify_succ,
-    irbuild::{inserter::{IRInserter, Inserter}, listener::InsertionListener},
+    irbuild::{
+        inserter::{IRInserter, Inserter},
+        listener::DummyListener,
+    },
     linked_list::ContainsLinkedList,
     op::Op,
     operation::Operation,
@@ -135,14 +138,14 @@ impl GenerateOp {
     /// It is provided with, as arguments, the current index values and an inserter
     /// (set to the start of the entry block). It must return the value yielded at that index.
     /// A [YieldOp] is automatically added at end of the body, taking this value as operand.
-    pub fn new<State, L: InsertionListener>(
+    pub fn new<State>(
         ctx: &mut Context,
         dynamic_dimensions: Vec<Value>,
         result_type: TypePtr<RankedTensorType>,
         body_builder: fn(
             ctx: &mut Context,
             state: State,
-            inserter: &mut IRInserter<L>,
+            inserter: &mut IRInserter<DummyListener>,
             indices: Vec<Value>,
         ) -> Value,
         body_builder_state: State,
