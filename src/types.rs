@@ -2,11 +2,11 @@
 
 use pliron::combine::{self, Parser};
 
+use pliron::derive::pliron_type;
 use pliron::{
     builtin::{type_interfaces::FloatTypeInterface, types::IntegerType},
     common_traits::Verify,
     context::{Context, Ptr},
-    derive::{def_type, format, format_type},
     parsable::Parsable,
     printable::Printable,
     result::Result,
@@ -59,9 +59,11 @@ impl Parsable for Dimension {
 }
 
 /// Ranked tensor type.
+#[pliron_type(
+    name = "tensor.ranked",
+    format = "`<` vec($shape, Char(`x`)) `x` $element_type `>`"
+)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[format_type("`<` vec($shape, Char(`x`)) `x` $element_type `>`")]
-#[def_type("tensor.ranked")]
 pub struct RankedTensorType {
     element_type: Ptr<TypeObj>,
     shape: Vec<Dimension>,
@@ -118,9 +120,8 @@ impl RankedTensorType {
 }
 
 /// Unranked tensor type.
+#[pliron_type(name = "tensor.unranked", format = "`<` $element_type `>`")]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[def_type("tensor.unranked")]
-#[format_type("`<` $element_type `>`")]
 pub struct UnrankedTensorType {
     element_type: Ptr<TypeObj>,
 }

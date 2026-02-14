@@ -16,6 +16,12 @@ jobs:
     steps:
     - uses: actions/checkout@v3
 
+    - name: Setup LLVM
+      run: |
+        wget https://apt.llvm.org/llvm.sh
+        chmod +x llvm.sh
+        sudo ./llvm.sh 21 all
+
     - name: Format
       run: cargo fmt --check
 
@@ -25,18 +31,12 @@ jobs:
     - name: Build
       run: RUSTFLAGS="-D warnings" cargo build --workspace --verbose
 
-#   - name: Tests (Debug)
-#     run: cargo test --workspace --verbose
+    - name: Tests (Debug)
+      run: cargo test --workspace --verbose
 
-#   - name: Tests (Release)
-#     run: cargo test --release --workspace --verbose
+    - name: Tests (Release)
+      run: cargo test --release --workspace --verbose
 
-#   - name: WASM Tests (Debug)
-#     run: cargo test --target wasm32-unknown-unknown
-
-#   - name: WASM Tests (Release)
-#     run: cargo test --release --target wasm32-unknown-unknown
-
-#   - name: Documentation
-#     run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace
+    - name: Documentation
+      run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace
 

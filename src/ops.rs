@@ -10,8 +10,7 @@ use pliron::{
     },
     common_traits::Verify,
     context::Context,
-    derive::{def_op, derive_op_interface_impl, format_op},
-    impl_verify_succ,
+    derive::pliron_op,
     irbuild::{
         inserter::{IRInserter, Inserter},
         listener::DummyListener,
@@ -48,14 +47,16 @@ use crate::op_interfaces::BinaryTensorOpInterface;
 ///   The region takes as many arguments as the rank of the result tensor type,
 ///   each representing an index along the corresponding dimension. The body should
 ///   yield a single value that matches the element type of the tensor.
-#[def_op("tensor.generate")]
-#[format_op("operands(CharSpace(`,`)) ` : ` type($0) region($0)")]
-#[derive_op_interface_impl(
-    SingleBlockRegionInterface,
-    OneRegionInterface,
-    NRegionsInterface<1>,
-    OneResultInterface,
-    NResultsInterface<1>
+#[pliron_op(
+    name = "tensor.generate",
+    format = "operands(CharSpace(`,`)) ` : ` type($0) region($0)",
+    interfaces = [
+        SingleBlockRegionInterface,
+        OneRegionInterface,
+        NRegionsInterface<1>,
+        OneResultInterface,
+        NResultsInterface<1>
+    ]
 )]
 pub struct GenerateOp;
 
@@ -188,11 +189,18 @@ impl GenerateOp {
 /// | operand | description |
 /// |-----|-------|
 /// | `value` | any type |
-#[def_op("tensor.yield")]
-#[format_op("$0")]
-#[derive_op_interface_impl(NResultsInterface<0>, OneOpdInterface, NOpdsInterface<1>, IsTerminatorInterface)]
+#[pliron_op(
+    name = "tensor.yield",
+    format = "$0",
+    interfaces = [
+        NResultsInterface<0>,
+        OneOpdInterface,
+        NOpdsInterface<1>,
+        IsTerminatorInterface
+    ],
+    verifier = "succ"
+)]
 pub struct YieldOp;
-impl_verify_succ!(YieldOp);
 
 impl YieldOp {
     /// Creates a new `YieldOp` with the specified operand.
@@ -221,19 +229,21 @@ impl YieldOp {
 /// | result | description |
 /// |-----|-------|
 /// | `result` | The resulting tensor, with same shape as the operands. |
-#[def_op("tensor.add")]
-#[format_op("operands(CharSpace(`,`)) ` : ` type($0)")]
-#[derive_op_interface_impl(
-    OneResultInterface,
-    SameResultsType,
-    SameOperandsAndResultType,
-    SameOperandsType,
-    BinaryTensorOpInterface,
-    NResultsInterface<1>,
-    NOpdsInterface<2>,
-    AtLeastNOpdsInterface<1>,
-    AtLeastNResultsInterface<1>,
-    AllResultsOfType<RankedTensorType>,
+#[pliron_op(
+    name = "tensor.add",
+    format = "operands(CharSpace(`,`)) ` : ` type($0)",
+    interfaces = [
+        OneResultInterface,
+        SameResultsType,
+        SameOperandsAndResultType,
+        SameOperandsType,
+        BinaryTensorOpInterface,
+        NResultsInterface<1>,
+        NOpdsInterface<2>,
+        AtLeastNOpdsInterface<1>,
+        AtLeastNResultsInterface<1>,
+        AllResultsOfType<RankedTensorType>,
+    ],
+    verifier = "succ"
 )]
 pub struct AddOp;
-impl_verify_succ!(AddOp);
