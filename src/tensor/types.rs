@@ -1,10 +1,7 @@
 //! Tensor types and related functionality.
 
 use pliron::derive::pliron_type;
-use pliron::{
-    context::Ptr,
-    r#type::TypeObj,
-};
+use pliron::{context::Ptr, r#type::TypeObj};
 
 use crate::memref::type_interfaces::{Dimension, MultiDimensionalType, ShapedType};
 

@@ -1,33 +1,29 @@
 //! Tensor ops and related functionality.
 
+use std::cell::Ref;
+
 use pliron::{
-    basic_block::BasicBlock,
     builtin::op_interfaces::{
         AllResultsOfType, AtLeastNOpdsInterface, AtLeastNResultsInterface, NOpdsInterface,
-        NRegionsInterface, NResultsInterface, OneOpdInterface, OneRegionInterface,
-        OneResultInterface, SameOperandsAndResultType, SameOperandsType, SameResultsType,
-        SingleBlockRegionInterface,
+        NRegionsInterface, NResultsInterface, OneRegionInterface, OneResultInterface,
+        SameOperandsAndResultType, SameOperandsType, SameResultsType, SingleBlockRegionInterface,
     },
-    common_traits::Verify,
     context::Context,
     derive::pliron_op,
     irbuild::{
-        inserter::{IRInserter, Inserter},
+        inserter::{BlockInsertionPoint, IRInserter, Inserter},
         listener::DummyListener,
     },
     op::Op,
     operation::Operation,
-    result::Result,
-    r#type::{TypePtr, Typed},
+    r#type::{TypePtr, type_cast},
     value::Value,
-    verify_err, verify_error,
 };
 
 use pliron_common_dialects::index::types::IndexType;
 
 use crate::memref::{
-    ops::YieldOp,
-    type_interfaces::{MultiDimensionalType, ShapedType},
+    op_interfaces::GenerateOpInterface, ops::YieldOp, type_interfaces::ShapedType,
 };
 
 use super::{op_interfaces::BinaryTensorOpInterface, types::RankedTensorType};
@@ -60,82 +56,22 @@ use super::{op_interfaces::BinaryTensorOpInterface, types::RankedTensorType};
         OneResultInterface,
         NResultsInterface<1>,
         AllResultsOfType<RankedTensorType>,
-    ]
+    ],
+    verifier = "succ"
 )]
 pub struct GenerateOp;
 
-#[derive(thiserror::Error, Debug)]
-pub enum GenerateOpVerifyErr {
-    #[error("GenerateOp region must an entry block")]
-    MissingEntryBlock,
-    #[error("GenerateOp expected operands to be of index type")]
-    OpdArgsNotIndexType,
-    #[error("GenerateOp number of operands {0} does not match number of dynamic dimensions {1}")]
-    NumOperandsMismatch(usize, usize),
-    #[error("GenerateOp entry block must have {0} arguments, found {1}")]
-    EntryBlockArgMismatch(usize, usize),
-    #[error("GenerateOp entry block arguments must be of index type")]
-    EntryBlockArgTypeMismatch,
-    #[error("GenerateOp entry block must terminate with a yield operation")]
-    InvalidTerminator,
-    #[error("GenerateOp yield operand type does not match result element type")]
-    YieldOperandTypeMismatch,
-}
+impl GenerateOpInterface for GenerateOp {
+    fn get_dynamic_dimension_operands(&self, ctx: &Context) -> Vec<Value> {
+        self.get_operation().deref(ctx).operands().collect()
+    }
 
-impl Verify for GenerateOp {
-    fn verify(&self, ctx: &Context) -> Result<()> {
-        let loc = self.loc(ctx);
-
-        let res_ty = self.result_type(ctx).deref(ctx);
-        let res_ty = res_ty
-            .downcast_ref::<RankedTensorType>()
-            .expect("Result type should have been verified to be RankedTensorType");
-
-        let op = &*self.get_operation().deref(ctx);
-        let num_dynamic_dims = res_ty.num_dynamic_dimensions();
-        let num_operands = op.get_num_operands();
-        if num_operands != num_dynamic_dims {
-            return verify_err!(
-                loc,
-                GenerateOpVerifyErr::NumOperandsMismatch(num_operands, num_dynamic_dims)
-            );
-        }
-        if !op
-            .operands()
-            .all(|opd| opd.get_type(ctx).deref(ctx).is::<IndexType>())
-        {
-            return verify_err!(loc, GenerateOpVerifyErr::OpdArgsNotIndexType);
-        }
-
-        let entry_block = self.get_body(ctx, 0);
-        let rank = res_ty.rank();
-        let entry_block = &*entry_block.deref(ctx);
-        if entry_block.get_num_arguments() != rank {
-            return verify_err!(
-                loc,
-                GenerateOpVerifyErr::EntryBlockArgMismatch(rank, entry_block.get_num_arguments())
-            );
-        }
-
-        if entry_block
-            .arguments()
-            .any(|arg| !arg.get_type(ctx).deref(ctx).is::<IndexType>())
-        {
-            return verify_err!(loc.clone(), GenerateOpVerifyErr::EntryBlockArgTypeMismatch);
-        }
-
-        let term = entry_block
-            .get_terminator(ctx)
-            .ok_or_else(|| verify_error!(loc.clone(), GenerateOpVerifyErr::InvalidTerminator))?;
-
-        let yield_op = Operation::get_op::<YieldOp>(term, ctx)
-            .ok_or_else(|| verify_error!(loc.clone(), GenerateOpVerifyErr::InvalidTerminator))?;
-
-        if yield_op.get_operand(ctx).get_type(ctx) != res_ty.element_type() {
-            return verify_err!(loc, GenerateOpVerifyErr::YieldOperandTypeMismatch);
-        }
-
-        Ok(())
+    fn get_generated_shape<'a>(&'a self, ctx: &'a Context) -> Ref<'a, dyn ShapedType> {
+        let result_ty = self.result_type(ctx).deref(ctx);
+        Ref::map(result_ty, |result_ty| {
+            type_cast::<dyn ShapedType>(&**result_ty)
+                .expect("The result type must be a shaped type")
+        })
     }
 }
 
@@ -143,7 +79,7 @@ impl GenerateOp {
     /// Creates a new dynamically sized tensor.
     /// The `body_builder` function is called to populate the body of the region.
     /// It is provided with, as arguments, the current index values and an inserter
-    /// (set to the start of the entry block). It must return the value yielded at that index.
+    /// (set to the end of the entry block). It must return the value yielded at that index.
     /// A [YieldOp] is automatically added at end of the body, taking this value as operand.
     pub fn new<State>(
         ctx: &mut Context,
@@ -166,21 +102,20 @@ impl GenerateOp {
             1,
         );
         let opop = GenerateOp { op };
+        let rank = result_type.deref(ctx).rank();
 
         // Create the initializer region.
         let index_ty = IndexType::get(ctx);
-        let rank = result_type.deref(ctx).rank();
         let region = opop.get_region(ctx);
-        let entry_block = BasicBlock::new(
+        let op_inserter = &mut IRInserter::default();
+        let entry_block = op_inserter.create_block(
             ctx,
+            BlockInsertionPoint::AtRegionStart(region),
             Some("entry".try_into().unwrap()),
             vec![index_ty.into(); rank],
         );
-        entry_block.insert_at_front(region, ctx);
-
         // Build the body.
         let indices = entry_block.deref(ctx).arguments().collect();
-        let op_inserter = &mut IRInserter::new_at_block_start(entry_block);
         let yield_value = body_builder(ctx, body_builder_state, op_inserter, indices);
         let yield_op = YieldOp::new(ctx, yield_value);
         op_inserter.append_op(ctx, yield_op);
