@@ -3,8 +3,8 @@
 use pliron::{
     basic_block::BasicBlock,
     builtin::op_interfaces::{
-        AllResultsOfType, AtLeastNOpdsInterface, AtLeastNResultsInterface, IsTerminatorInterface,
-        NOpdsInterface, NRegionsInterface, NResultsInterface, OneOpdInterface, OneRegionInterface,
+        AllResultsOfType, AtLeastNOpdsInterface, AtLeastNResultsInterface, NOpdsInterface,
+        NRegionsInterface, NResultsInterface, OneOpdInterface, OneRegionInterface,
         OneResultInterface, SameOperandsAndResultType, SameOperandsType, SameResultsType,
         SingleBlockRegionInterface,
     },
@@ -15,7 +15,6 @@ use pliron::{
         inserter::{IRInserter, Inserter},
         listener::DummyListener,
     },
-    linked_list::ContainsLinkedList,
     op::Op,
     operation::Operation,
     result::Result,
@@ -26,8 +25,12 @@ use pliron::{
 
 use pliron_common_dialects::index::types::IndexType;
 
-use super::types::RankedTensorType;
-use crate::op_interfaces::BinaryTensorOpInterface;
+use crate::memref::{
+    ops::YieldOp,
+    type_interfaces::{MultiDimensionalType, ShapedType},
+};
+
+use super::{op_interfaces::BinaryTensorOpInterface, types::RankedTensorType};
 
 /// Op to generate a tensor by applying a function to generate the value at each index.
 /// See MLIR's [GenerateOp](https://mlir.llvm.org/docs/Dialects/TensorOps/#tensorgenerate-tensorgenerateop).
@@ -55,17 +58,18 @@ use crate::op_interfaces::BinaryTensorOpInterface;
         OneRegionInterface,
         NRegionsInterface<1>,
         OneResultInterface,
-        NResultsInterface<1>
+        NResultsInterface<1>,
+        AllResultsOfType<RankedTensorType>,
     ]
 )]
 pub struct GenerateOp;
 
 #[derive(thiserror::Error, Debug)]
 pub enum GenerateOpVerifyErr {
-    #[error("GenerateOp result type must be a RankedTensorType")]
-    InvalidResultType,
     #[error("GenerateOp region must an entry block")]
     MissingEntryBlock,
+    #[error("GenerateOp expected operands to be of index type")]
+    OpdArgsNotIndexType,
     #[error("GenerateOp number of operands {0} does not match number of dynamic dimensions {1}")]
     NumOperandsMismatch(usize, usize),
     #[error("GenerateOp entry block must have {0} arguments, found {1}")]
@@ -85,23 +89,25 @@ impl Verify for GenerateOp {
         let res_ty = self.result_type(ctx).deref(ctx);
         let res_ty = res_ty
             .downcast_ref::<RankedTensorType>()
-            .ok_or_else(|| verify_error!(loc.clone(), GenerateOpVerifyErr::InvalidResultType))?;
+            .expect("Result type should have been verified to be RankedTensorType");
 
+        let op = &*self.get_operation().deref(ctx);
         let num_dynamic_dims = res_ty.num_dynamic_dimensions();
-        let num_operands = self.get_operation().deref(ctx).get_num_operands();
+        let num_operands = op.get_num_operands();
         if num_operands != num_dynamic_dims {
             return verify_err!(
                 loc,
                 GenerateOpVerifyErr::NumOperandsMismatch(num_operands, num_dynamic_dims)
             );
         }
+        if !op
+            .operands()
+            .all(|opd| opd.get_type(ctx).deref(ctx).is::<IndexType>())
+        {
+            return verify_err!(loc, GenerateOpVerifyErr::OpdArgsNotIndexType);
+        }
 
-        let region = self.get_region(ctx);
-        let entry_block = region
-            .deref(ctx)
-            .get_head()
-            .ok_or_else(|| verify_error!(loc.clone(), GenerateOpVerifyErr::MissingEntryBlock))?;
-
+        let entry_block = self.get_body(ctx, 0);
         let rank = res_ty.rank();
         let entry_block = &*entry_block.deref(ctx);
         if entry_block.get_num_arguments() != rank {
@@ -180,40 +186,6 @@ impl GenerateOp {
         op_inserter.append_op(ctx, yield_op);
 
         opop
-    }
-}
-
-/// Yield a single value from within a region.
-///
-/// ## Operand(s)
-/// | operand | description |
-/// |-----|-------|
-/// | `value` | any type |
-#[pliron_op(
-    name = "tensor.yield",
-    format = "$0",
-    interfaces = [
-        NResultsInterface<0>,
-        OneOpdInterface,
-        NOpdsInterface<1>,
-        IsTerminatorInterface
-    ],
-    verifier = "succ"
-)]
-pub struct YieldOp;
-
-impl YieldOp {
-    /// Creates a new `YieldOp` with the specified operand.
-    pub fn new(ctx: &mut Context, value: Value) -> Self {
-        let op = Operation::new(
-            ctx,
-            Self::get_concrete_op_info(),
-            vec![],
-            vec![value],
-            vec![],
-            0,
-        );
-        YieldOp { op }
     }
 }
 

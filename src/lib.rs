@@ -1,6 +1,4 @@
-//! Pliron dialects for tensors and related functionality.
+//! Tensor and memref related functionality, including types and ops.
 
-pub mod attributes;
-pub mod op_interfaces;
-pub mod ops;
-pub mod types;
+pub mod memref;
+pub mod tensor;
