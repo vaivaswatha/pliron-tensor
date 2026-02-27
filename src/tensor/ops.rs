@@ -4,10 +4,12 @@ use std::cell::Ref;
 
 use pliron::{
     builtin::op_interfaces::{
-        AllResultsOfType, AtLeastNOpdsInterface, AtLeastNResultsInterface, NOpdsInterface,
-        NRegionsInterface, NResultsInterface, OneRegionInterface, OneResultInterface,
-        SameOperandsAndResultType, SameOperandsType, SameResultsType, SingleBlockRegionInterface,
+        AllOperandsOfType, AllResultsOfType, AtLeastNOpdsInterface, AtLeastNResultsInterface,
+        NOpdsInterface, NRegionsInterface, NResultsInterface, OneRegionInterface,
+        OneResultInterface, SameOperandsAndResultType, SameOperandsType, SameResultsType,
+        SingleBlockRegionInterface,
     },
+    common_traits::Verify,
     context::Context,
     derive::pliron_op,
     irbuild::{
@@ -16,11 +18,13 @@ use pliron::{
     },
     op::Op,
     operation::Operation,
+    result::Result,
     r#type::{TypePtr, type_cast},
     value::Value,
+    verify_err,
 };
 
-use pliron_common_dialects::index::types::IndexType;
+use pliron_common_dialects::{cf::op_interfaces::YieldingRegion, index::types::IndexType};
 
 use crate::memref::{
     op_interfaces::GenerateOpInterface, ops::YieldOp, type_interfaces::ShapedType,
@@ -55,17 +59,47 @@ use super::{op_interfaces::BinaryTensorOpInterface, types::RankedTensorType};
         NRegionsInterface<1>,
         OneResultInterface,
         NResultsInterface<1>,
+        YieldingRegion<YieldOp>,
         AllResultsOfType<RankedTensorType>,
+        AllOperandsOfType<IndexType>,
     ],
-    verifier = "succ"
 )]
 pub struct GenerateOp;
 
-impl GenerateOpInterface for GenerateOp {
-    fn get_dynamic_dimension_operands(&self, ctx: &Context) -> Vec<Value> {
-        self.get_operation().deref(ctx).operands().collect()
-    }
+#[derive(thiserror::Error, Debug)]
+pub enum GenerateOpVerifyErr {
+    #[error(
+        "GenerateOp number of operands {expected} does not match number of dynamic dimensions {got}"
+    )]
+    NumOperandsMismatch { expected: usize, got: usize },
+}
 
+impl Verify for GenerateOp {
+    fn verify(&self, ctx: &Context) -> Result<()> {
+        let loc = self.loc(ctx);
+        let result_shape = self.get_generated_shape(ctx);
+        let num_dynamic_dims = result_shape.num_dynamic_dimensions();
+
+        let dynamic_dim_operands = self
+            .get_operation()
+            .deref(ctx)
+            .operands()
+            .collect::<Vec<_>>();
+        let num_operands = dynamic_dim_operands.len();
+        if num_operands != num_dynamic_dims {
+            return verify_err!(
+                loc,
+                GenerateOpVerifyErr::NumOperandsMismatch {
+                    expected: num_dynamic_dims,
+                    got: num_operands
+                }
+            );
+        }
+        Ok(())
+    }
+}
+
+impl GenerateOpInterface for GenerateOp {
     fn get_generated_shape<'a>(&'a self, ctx: &'a Context) -> Ref<'a, dyn ShapedType> {
         let result_ty = self.result_type(ctx).deref(ctx);
         Ref::map(result_ty, |result_ty| {

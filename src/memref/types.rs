@@ -7,8 +7,9 @@ use crate::memref::type_interfaces::{Dimension, MultiDimensionalType, ShapedType
 /// Ranked memref type.
 #[pliron_type(
     name = "memref.ranked",
-    format = "`<` vec($shape, Char(`x`)) `x` $element_type `>`",
-    verifier = "succ"
+    format = "`<` vec($shape, Char(`x`)) ` : ` $element_type `>`",
+    verifier = "succ",
+    generate_get = true
 )]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RankedMemrefType {

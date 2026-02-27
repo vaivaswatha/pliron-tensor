@@ -1,15 +1,14 @@
 //! Type interfaces for the memref dialect.
 
-use pliron::combine::{self, Parser};
-use pliron::derive::type_interface;
-use pliron::r#type::type_cast;
 use pliron::{
     builtin::{type_interfaces::FloatTypeInterface, types::IntegerType},
+    combine::{self, Parser},
     context::{Context, Ptr},
+    derive::type_interface,
     parsable::Parsable,
     printable::Printable,
     result::Result,
-    r#type::{Type, TypeObj, type_impls},
+    r#type::{Type, TypeObj, type_cast, type_impls},
     verify_err_noloc,
 };
 
@@ -17,7 +16,7 @@ use pliron::{
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Dimension {
     Dynamic,
-    Static(u64),
+    Static(usize),
 }
 
 impl Printable for Dimension {
@@ -43,7 +42,7 @@ impl Parsable for Dimension {
     ) -> pliron::parsable::ParseResult<'a, Self::Parsed> {
         combine::parser::char::char('?')
             .map(|_| Dimension::Dynamic)
-            .or(u64::parser(()).map(Dimension::Static))
+            .or(usize::parser(()).map(Dimension::Static))
             .parse_stream(state_stream)
             .into_result()
     }

@@ -7,42 +7,27 @@ use pliron::{
     context::Context,
     derive::op_interface,
     op::{Op, op_cast},
-    operation::Operation,
     result::Result,
     r#type::Typed,
-    value::Value,
-    verify_err, verify_error,
+    verify_err,
 };
-use pliron_common_dialects::index::types::IndexType;
+use pliron_common_dialects::{cf::op_interfaces::YieldingRegion, index::types::IndexType};
 
 use crate::memref::{ops::YieldOp, type_interfaces::ShapedType};
 
 #[derive(thiserror::Error, Debug)]
 pub enum GenerateOpInterfaceVerifyErr {
-    #[error("GenerateInterface region must an entry block")]
-    MissingEntryBlock,
-    #[error("GenerateInterface expected operands to be of index type")]
-    OpdArgsNotIndexType,
-    #[error(
-        "GenerateInterface number of operands {0} does not match number of dynamic dimensions {1}"
-    )]
-    NumOperandsMismatch(usize, usize),
     #[error("GenerateInterface entry block must have {0} arguments, found {1}")]
     EntryBlockArgMismatch(usize, usize),
     #[error("GenerateInterface entry block arguments must be of index type")]
     EntryBlockArgTypeMismatch,
-    #[error("GenerateInterface entry block must terminate with a yield operation")]
-    InvalidTerminator,
     #[error("GenerateInterface yield operand type does not match result element type")]
     YieldOperandTypeMismatch,
 }
 
 #[op_interface]
-pub trait GenerateOpInterface: SingleBlockRegionInterface {
-    /// Get the operands corresponding to the dynamic dimensions of the memref.
-    fn get_dynamic_dimension_operands(&self, ctx: &Context) -> Vec<Value>;
-
-    /// Get the shape of the memref being generated
+pub trait GenerateOpInterface: SingleBlockRegionInterface + YieldingRegion<YieldOp> {
+    /// Get the shape of the memref/tensor we're generating.
     fn get_generated_shape<'a>(&'a self, ctx: &'a Context) -> Ref<'a, dyn ShapedType>;
 
     fn verify(op: &dyn Op, ctx: &Context) -> Result<()>
@@ -51,26 +36,10 @@ pub trait GenerateOpInterface: SingleBlockRegionInterface {
     {
         let loc = op.loc(ctx);
         let op = op_cast::<dyn GenerateOpInterface>(op)
-            .expect("We must get an Op implementing GenerateInterface here");
-        let result_shape = op.get_generated_shape(ctx);
-        let num_dynamic_dims = result_shape.num_dynamic_dimensions();
-
-        let dynamic_dim_operands = op.get_dynamic_dimension_operands(ctx);
-        let num_operands = dynamic_dim_operands.len();
-        if num_operands != num_dynamic_dims {
-            return verify_err!(
-                loc,
-                GenerateOpInterfaceVerifyErr::NumOperandsMismatch(num_operands, num_dynamic_dims)
-            );
-        }
-        if !dynamic_dim_operands
-            .iter()
-            .all(|opd| opd.get_type(ctx).deref(ctx).is::<IndexType>())
-        {
-            return verify_err!(loc, GenerateOpInterfaceVerifyErr::OpdArgsNotIndexType);
-        }
+            .expect("Operation does not implement GenerateOpInterface");
 
         let entry_block = op.get_body(ctx, 0);
+        let result_shape = op.get_generated_shape(ctx);
         let rank = result_shape.rank();
         let entry_block = &*entry_block.deref(ctx);
         if entry_block.get_num_arguments() != rank {
@@ -93,14 +62,7 @@ pub trait GenerateOpInterface: SingleBlockRegionInterface {
             );
         }
 
-        let term = entry_block.get_terminator(ctx).ok_or_else(|| {
-            verify_error!(loc.clone(), GenerateOpInterfaceVerifyErr::InvalidTerminator)
-        })?;
-
-        let yield_op = Operation::get_op::<YieldOp>(term, ctx).ok_or_else(|| {
-            verify_error!(loc.clone(), GenerateOpInterfaceVerifyErr::InvalidTerminator)
-        })?;
-
+        let yield_op = op.get_yield(ctx);
         if yield_op.get_operand(ctx).get_type(ctx) != result_shape.element_type() {
             return verify_err!(loc, GenerateOpInterfaceVerifyErr::YieldOperandTypeMismatch);
         }
