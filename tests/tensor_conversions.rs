@@ -47,7 +47,7 @@ fn test_tensor_to_memref_conversion() {
                     res_tensor = tensor.add input1, input2 : tensor.ranked<16x16:builtin.integer i64>;
                     i_res_index = index.from_integer i_res : index.index;
                     j_res_index = index.from_integer j_res : index.index;
-                    res = tensor.extract res_tensor, i_res_index, j_res_index [1,2]: builtin.integer i64;
+                    res = tensor.extract res_tensor[i_res_index, j_res_index]: builtin.integer i64;
                     llvm.return res
                 }
             }

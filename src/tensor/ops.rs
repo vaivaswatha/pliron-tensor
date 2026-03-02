@@ -8,17 +8,29 @@ use pliron::{
         OneRegionInterface, OneResultInterface, OperandSegmentInterface,
         SingleBlockRegionInterface,
     },
+    combine::{
+        Parser,
+        parser::char::{self, spaces},
+    },
     common_traits::Verify,
-    context::Context,
+    context::{Context, Ptr},
     derive::pliron_op,
+    identifier::Identifier,
     irbuild::{
         inserter::{BlockInsertionPoint, IRInserter, Inserter, OpInsertionPoint},
         listener::DummyListener,
     },
-    op::Op,
+    irfmt::{
+        parsers::{delimited_list_parser, process_parsed_ssa_defs, spaced, ssa_opd_parser},
+        printers::iter_with_sep,
+    },
+    location::Location,
+    op::{Op, OpObj},
     operation::Operation,
+    parsable::{self, IntoParseResult, Parsable},
+    printable::{self, Printable},
     result::Result,
-    r#type::{TypePtr, Typed, type_cast},
+    r#type::{TypeObj, TypePtr, Typed, type_cast},
     value::Value,
     verify_err, verify_error,
 };
@@ -179,27 +191,72 @@ impl GenerateOp {
 /// | `result` | The extracted element, with the same type as the element type of the operand tensor. |
 #[pliron_op(
     name = "tensor.extract",
-    format = "operands(CharSpace(`,`)) \
-        attr($operand_segment_sizes, `::pliron::builtin::attributes::OperandSegmentSizesAttr`) \
-        ` : ` type($0)",
     interfaces = [OneResultInterface, NResultsInterface<1>, OperandSegmentInterface]
 )]
 pub struct ExtractOp;
 
+impl Printable for ExtractOp {
+    fn fmt(
+        &self,
+        ctx: &Context,
+        _state: &printable::State,
+        f: &mut std::fmt::Formatter,
+    ) -> std::fmt::Result {
+        let tensor = self.get_tensor_operand(ctx);
+        let indices = self.get_index_operands(ctx);
+        write!(
+            f,
+            "{} {}[{}] : {}",
+            Self::get_opid_static(),
+            tensor.disp(ctx),
+            iter_with_sep(
+                indices.iter(),
+                pliron::printable::ListSeparator::CharSpace(',')
+            )
+            .disp(ctx),
+            self.result_type(ctx).disp(ctx)
+        )
+    }
+}
+
+impl Parsable for ExtractOp {
+    type Arg = Vec<(Identifier, Location)>;
+    type Parsed = OpObj;
+
+    fn parse<'a>(
+        state_stream: &mut parsable::StateStream<'a>,
+        results: Self::Arg,
+    ) -> parsable::ParseResult<'a, Self::Parsed> {
+        let (memref, indices, res_ty) = (
+            ssa_opd_parser().skip(spaces()),
+            delimited_list_parser('[', ']', ',', ssa_opd_parser()),
+            spaced(char::string(":")).with(Ptr::<TypeObj>::parser(())),
+        );
+
+        let ((memref, indices, res_ty), _) = (memref, indices, res_ty)
+            .parse_stream(state_stream)
+            .into_result()?;
+
+        let op = ExtractOp::new(state_stream.state.ctx, res_ty, memref, indices);
+
+        process_parsed_ssa_defs(state_stream, &results, op.get_operation())?;
+        Ok(OpObj::new(op)).into_parse_result()
+    }
+}
+
 impl ExtractOp {
     /// Create a new ExtractOp with the given operand and result type.
-    pub fn new(ctx: &mut Context, tensor: Value, indices: Vec<Value>) -> Self {
-        let elem_ty = tensor
-            .get_type(ctx)
-            .deref(ctx)
-            .downcast_ref::<RankedTensorType>()
-            .expect("Expected a RankedTensorType")
-            .element_type();
+    pub fn new(
+        ctx: &mut Context,
+        res_ty: Ptr<TypeObj>,
+        tensor: Value,
+        indices: Vec<Value>,
+    ) -> Self {
         let (operands, operand_segments) = Self::compute_segment_sizes(vec![vec![tensor], indices]);
         let op = Operation::new(
             ctx,
             Self::get_concrete_op_info(),
-            vec![elem_ty],
+            vec![res_ty],
             operands,
             vec![],
             0,

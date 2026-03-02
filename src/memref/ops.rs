@@ -9,15 +9,27 @@ use pliron::{
         OneOpdInterface, OneRegionInterface, OneResultInterface, OperandSegmentInterface,
         SameOperandsType, SameResultsType, SingleBlockRegionInterface,
     },
+    combine::parser::{
+        Parser,
+        char::{self, spaces},
+    },
     common_traits::Verify,
     context::{Context, Ptr},
     derive::pliron_op,
+    identifier::Identifier,
     irbuild::{
         inserter::{BlockInsertionPoint, IRInserter, Inserter, OpInsertionPoint},
         listener::DummyListener,
     },
-    op::Op,
+    irfmt::{
+        parsers::{delimited_list_parser, process_parsed_ssa_defs, spaced, ssa_opd_parser},
+        printers::iter_with_sep,
+    },
+    location::Location,
+    op::{Op, OpObj},
     operation::Operation,
+    parsable::{self, IntoParseResult, Parsable},
+    printable::{self, Printable},
     result::Result,
     r#type::{TypeObj, TypePtr, Typed, type_cast},
     value::Value,
@@ -266,8 +278,6 @@ impl YieldOp {
 /// The number of index operands must match the rank of the memref.
 #[pliron_op(
     name = "memref.store",
-    // TODO: memref.store %value to %memref[%indices...]
-    format = "operands(CharSpace(`,`))",
     interfaces = [
         NResultsInterface<0>,
         AtLeastNOpdsInterface<3>,
@@ -275,6 +285,50 @@ impl YieldOp {
     ]
 )]
 pub struct StoreOp;
+
+impl Printable for StoreOp {
+    fn fmt(
+        &self,
+        ctx: &Context,
+        _state: &printable::State,
+        f: &mut std::fmt::Formatter,
+    ) -> std::fmt::Result {
+        let value = self.get_value(ctx);
+        let memref = self.get_destination_memref(ctx);
+        let indices = self.get_indices(ctx);
+        write!(
+            f,
+            "{} {} to {}[{}]",
+            Self::get_opid_static(),
+            value.disp(ctx),
+            memref.disp(ctx),
+            iter_with_sep(indices.iter(), printable::ListSeparator::CharSpace(',')).disp(ctx)
+        )
+    }
+}
+
+impl Parsable for StoreOp {
+    type Arg = Vec<(Identifier, Location)>;
+    type Parsed = OpObj;
+
+    fn parse<'a>(
+        state_stream: &mut parsable::StateStream<'a>,
+        results: Self::Arg,
+    ) -> parsable::ParseResult<'a, Self::Parsed> {
+        let (value, memref, indices) = (
+            ssa_opd_parser().skip(spaced(char::string("to"))),
+            ssa_opd_parser().skip(spaces()),
+            delimited_list_parser('[', ']', ',', ssa_opd_parser()),
+        );
+
+        let ((value, memref, indices), _) = (value, memref, indices)
+            .parse_stream(state_stream)
+            .into_result()?;
+        let op = StoreOp::new(state_stream.state.ctx, value, memref, indices);
+        process_parsed_ssa_defs(state_stream, &results, op.get_operation())?;
+        Ok(OpObj::new(op)).into_parse_result()
+    }
+}
 
 impl StoreOp {
     /// Creates a new `StoreOp` with the specified operands.
@@ -380,9 +434,6 @@ impl Verify for StoreOp {
 /// | result | The loaded value. Must be of the same element type as the memref. |
 #[pliron_op(
     name = "memref.load",
-    format = "operands(CharSpace(`,`)) \
-        attr($operand_segment_sizes, `::pliron::builtin::attributes::OperandSegmentSizesAttr`) \
-        ` : ` type($0)",
     interfaces = [
         NResultsInterface<1>,
         OneResultInterface,
@@ -391,6 +442,51 @@ impl Verify for StoreOp {
     ],
 )]
 pub struct LoadOp;
+
+impl Printable for LoadOp {
+    fn fmt(
+        &self,
+        ctx: &Context,
+        _state: &printable::State,
+        f: &mut std::fmt::Formatter,
+    ) -> std::fmt::Result {
+        let memref = self.get_source_memref(ctx);
+        let indices = self.get_indices(ctx);
+        write!(
+            f,
+            "{} {}[{}] : {}",
+            Self::get_opid_static(),
+            memref.disp(ctx),
+            iter_with_sep(indices.iter(), printable::ListSeparator::CharSpace(',')).disp(ctx),
+            self.get_result(ctx).get_type(ctx).disp(ctx)
+        )
+    }
+}
+
+impl Parsable for LoadOp {
+    type Arg = Vec<(Identifier, Location)>;
+    type Parsed = OpObj;
+
+    fn parse<'a>(
+        state_stream: &mut parsable::StateStream<'a>,
+        results: Self::Arg,
+    ) -> parsable::ParseResult<'a, Self::Parsed> {
+        let (memref, indices, res_ty) = (
+            ssa_opd_parser().skip(spaces()),
+            delimited_list_parser('[', ']', ',', ssa_opd_parser()),
+            spaced(char::string(":")).with(Ptr::<TypeObj>::parser(())),
+        );
+
+        let ((memref, indices, res_ty), _) = (memref, indices, res_ty)
+            .parse_stream(state_stream)
+            .into_result()?;
+
+        let op = LoadOp::new(state_stream.state.ctx, res_ty, memref, indices);
+
+        process_parsed_ssa_defs(state_stream, &results, op.get_operation())?;
+        Ok(OpObj::new(op)).into_parse_result()
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum LoadOpVerifyErr {

@@ -39,7 +39,7 @@ fn test_alloc_generate() {
                     };
                     i_index = index.from_integer i_res : index.index;
                     j_index = index.from_integer j_res : index.index;
-                    result = memref.load memref, i_index, j_index [1, 2]: builtin.integer i64;
+                    result = memref.load memref[i_index, j_index]: builtin.integer i64;
                     llvm.return result
                 }
             }
