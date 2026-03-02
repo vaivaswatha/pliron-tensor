@@ -1,9 +1,13 @@
 //! Translate tensor to memref
 
 use pliron::{
-    builtin::op_interfaces::{OneOpdInterface, OneRegionInterface, OneResultInterface},
+    builtin::{
+        attributes::TypeAttr,
+        op_interfaces::{OneOpdInterface, OneRegionInterface, OneResultInterface},
+        type_interfaces::FunctionTypeInterface,
+    },
     context::{Context, Ptr},
-    derive::op_interface_impl,
+    derive::{op_interface_impl, type_interface_impl},
     input_error,
     irbuild::{
         inserter::{BlockInsertionPoint, Inserter},
@@ -19,7 +23,7 @@ use pliron::{
     value::Value,
 };
 use pliron_common_dialects::cf::op_interfaces::YieldingRegion;
-use pliron_llvm::ToLLVMType;
+use pliron_llvm::{ToLLVMType, ops::FuncOp};
 
 use crate::{
     memref::{
@@ -35,6 +39,7 @@ use crate::{
     },
 };
 
+#[type_interface_impl]
 impl ToMemrefType for RankedTensorType {
     fn converter(&self) -> ToMemrefTypeFn {
         |self_ty, ctx| {
@@ -232,12 +237,77 @@ impl ToMemrefDialect for AddOp {
     }
 }
 
+#[op_interface_impl]
+impl ToMemrefDialect for pliron_llvm::ops::LoadOp {
+    fn rewrite(&self, ctx: &mut Context, _rewriter: &mut MatchRewriter) -> Result<()> {
+        let loaded_ty = self.get_result(ctx).get_type(ctx);
+        let to_memref_ty =
+            type_cast::<dyn ToMemrefType>(&**loaded_ty.deref(ctx)).map(|t| t.converter());
+        let memref_ty = if let Some(to_memref_ty) = to_memref_ty {
+            (to_memref_ty)(loaded_ty, ctx)?
+        } else {
+            loaded_ty
+        };
+        self.get_result(ctx).set_type(ctx, memref_ty);
+        Ok(())
+    }
+}
+
+fn lower_func_op_to_llvm(func_op: &FuncOp, ctx: &mut Context) -> Result<()> {
+    // update the function type to convert any tensor types in the signature to memref types.
+    let func_ty = func_op.get_type(ctx);
+    let res_ty = func_ty.deref(ctx).result_type();
+    let res_ty_converter = type_cast::<dyn ToMemrefType>(&**res_ty.deref(ctx))
+        .map(|to_memref_ty| to_memref_ty.converter());
+    let res_ty = if let Some(res_ty_converter) = res_ty_converter {
+        (res_ty_converter)(res_ty, ctx)?
+    } else {
+        res_ty
+    };
+    let arg_tys = func_ty.deref(ctx).arg_types();
+    let arg_tys = arg_tys
+        .iter()
+        .map(|arg_ty| {
+            let arg_ty_converter = type_cast::<dyn ToMemrefType>(&**arg_ty.deref(ctx))
+                .map(|to_memref_ty| to_memref_ty.converter());
+            if let Some(arg_ty_converter) = arg_ty_converter {
+                (arg_ty_converter)(*arg_ty, ctx)
+            } else {
+                Ok(*arg_ty)
+            }
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let new_func_ty = pliron_llvm::types::FuncType::get(ctx, res_ty, arg_tys, false);
+    func_op.set_attr_llvm_func_type(ctx, TypeAttr::new(new_func_ty.into()));
+
+    // Update all arguments in the entry block to use the new memref types.
+    let entry_block = func_op
+        .get_entry_block(ctx)
+        .expect("FuncOp must have an entry block");
+
+    let args = entry_block.deref(ctx).arguments().collect::<Vec<_>>();
+    for arg in args {
+        let arg_ty = arg.get_type(ctx);
+        let arg_ty_converter = type_cast::<dyn ToMemrefType>(&**arg_ty.deref(ctx))
+            .map(|to_memref_ty| to_memref_ty.converter());
+        let arg_ty = if let Some(arg_ty_converter) = arg_ty_converter {
+            (arg_ty_converter)(arg_ty, ctx)?
+        } else {
+            arg_ty
+        };
+        arg.set_type(ctx, arg_ty);
+    }
+
+    Ok(())
+}
+
 /// Implement [MatchRewrite] for tensor to memref conversion.
 pub struct TensorToMemref;
 
 impl MatchRewrite for TensorToMemref {
     fn r#match(&mut self, ctx: &Context, op: Ptr<Operation>) -> bool {
         op_impls::<dyn ToMemrefDialect>(&*Operation::get_op_dyn(op, ctx))
+            || Operation::get_op::<FuncOp>(op, ctx).is_some()
     }
 
     fn rewrite(
@@ -246,6 +316,9 @@ impl MatchRewrite for TensorToMemref {
         rewriter: &mut MatchRewriter,
         op: Ptr<Operation>,
     ) -> Result<()> {
+        if let Some(func_op) = Operation::get_op::<FuncOp>(op, ctx) {
+            return lower_func_op_to_llvm(&func_op, ctx);
+        }
         let op_dyn = Operation::get_op_dyn(op, ctx);
         let to_memref_op = op_cast::<dyn ToMemrefDialect>(&*op_dyn)
             .expect("Matched Op must implement ToMemrefDialect");

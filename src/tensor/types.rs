@@ -9,7 +9,8 @@ use crate::memref::type_interfaces::{Dimension, MultiDimensionalType, ShapedType
 #[pliron_type(
     name = "tensor.ranked",
     format = "`<` vec($shape, Char(`x`)) ` : ` $element_type `>`",
-    verifier = "succ"
+    verifier = "succ",
+    generate_get = true
 )]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RankedTensorType {
@@ -36,7 +37,8 @@ impl ShapedType for RankedTensorType {
 #[pliron_type(
     name = "tensor.unranked",
     format = "`<` $element_type `>`",
-    verifier = "succ"
+    verifier = "succ",
+    generate_get = true
 )]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct UnrankedTensorType {

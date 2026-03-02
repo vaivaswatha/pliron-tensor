@@ -2,9 +2,11 @@
 
 use pliron::{
     builtin::{
+        attributes::TypeAttr,
         op_interfaces::{
             CallOpCallable, OneRegionInterface, OneResultInterface, SymbolOpInterface,
         },
+        type_interfaces::FunctionTypeInterface,
         types::{IntegerType, Signedness},
     },
     context::{Context, Ptr},
@@ -34,7 +36,7 @@ use pliron_llvm::{
     attributes::IntegerOverflowFlagsAttr,
     function_call_utils::{compute_type_size_in_bytes, lookup_or_create_malloc_fn},
     op_interfaces::IntBinArithOpWithOverflowFlag,
-    ops::{BrOp, CallOp, MulOp},
+    ops::{BrOp, CallOp, FuncOp, MulOp},
 };
 
 use crate::memref::{
@@ -396,12 +398,72 @@ impl ToLLVMType for RankedMemrefType {
     }
 }
 
+fn lower_func_op_to_llvm(func_op: &FuncOp, ctx: &mut Context) -> Result<()> {
+    // update the function type to convert any tensor types in the signature to LLVM types.
+    let func_ty = func_op.get_type(ctx);
+    let res_ty = func_ty.deref(ctx).result_type();
+    let res_ty_converter =
+        type_cast::<dyn ToLLVMType>(&**res_ty.deref(ctx)).map(|to_llvm_ty| to_llvm_ty.converter());
+    let res_ty = if let Some(res_ty_converter) = res_ty_converter {
+        (res_ty_converter)(res_ty, ctx)?
+    } else {
+        res_ty
+    };
+    let arg_tys = func_ty.deref(ctx).arg_types();
+    let arg_tys = arg_tys
+        .iter()
+        .map(|arg_ty| {
+            let arg_ty_converter = type_cast::<dyn ToLLVMType>(&**arg_ty.deref(ctx))
+                .map(|to_llvm_ty| to_llvm_ty.converter());
+            if let Some(arg_ty_converter) = arg_ty_converter {
+                (arg_ty_converter)(*arg_ty, ctx)
+            } else {
+                Ok(*arg_ty)
+            }
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let new_func_ty = pliron_llvm::types::FuncType::get(ctx, res_ty, arg_tys, false);
+    func_op.set_attr_llvm_func_type(ctx, TypeAttr::new(new_func_ty.into()));
+
+    // Update the argument types in the entry block as well.
+    let entry_block = func_op
+        .get_entry_block(ctx)
+        .expect("FuncOp must have an entry block");
+    let args = entry_block.deref(ctx).arguments().collect::<Vec<_>>();
+    for arg in args {
+        let arg_ty = arg.get_type(ctx);
+        let arg_ty_converter = type_cast::<dyn ToLLVMType>(&**arg_ty.deref(ctx))
+            .map(|to_llvm_ty| to_llvm_ty.converter());
+        let arg_ty = if let Some(arg_ty_converter) = arg_ty_converter {
+            (arg_ty_converter)(arg_ty, ctx)?
+        } else {
+            arg_ty
+        };
+        arg.set_type(ctx, arg_ty);
+    }
+    Ok(())
+}
+
+fn lower_llvm_load_op_to_llvm(load_op: &pliron_llvm::ops::LoadOp, ctx: &mut Context) -> Result<()> {
+    let loaded_ty = load_op.get_result(ctx).get_type(ctx);
+    let to_memref_ty = type_cast::<dyn ToLLVMType>(&**loaded_ty.deref(ctx)).map(|t| t.converter());
+    let memref_ty = if let Some(to_memref_ty) = to_memref_ty {
+        (to_memref_ty)(loaded_ty, ctx)?
+    } else {
+        loaded_ty
+    };
+    load_op.get_result(ctx).set_type(ctx, memref_ty);
+    Ok(())
+}
+
 /// Implement [MatchRewrite] for control-flow to CF conversion.
 pub struct MemrefToCF;
 
 impl MatchRewrite for MemrefToCF {
     fn r#match(&mut self, ctx: &Context, op: Ptr<Operation>) -> bool {
         op_impls::<dyn ToCFDialect>(&*Operation::get_op_dyn(op, ctx))
+            || Operation::get_op::<FuncOp>(op, ctx).is_some()
+            || Operation::get_op::<pliron_llvm::ops::LoadOp>(op, ctx).is_some()
     }
 
     fn rewrite(
@@ -410,6 +472,13 @@ impl MatchRewrite for MemrefToCF {
         rewriter: &mut MatchRewriter,
         op: Ptr<Operation>,
     ) -> Result<()> {
+        if let Some(func_op) = Operation::get_op::<FuncOp>(op, ctx) {
+            return lower_func_op_to_llvm(&func_op, ctx);
+        }
+        if let Some(load_op) = Operation::get_op::<pliron_llvm::ops::LoadOp>(op, ctx) {
+            return lower_llvm_load_op_to_llvm(&load_op, ctx);
+        }
+
         let op_dyn = Operation::get_op_dyn(op, ctx);
         let to_cf_op =
             op_cast::<dyn ToCFDialect>(&*op_dyn).expect("Matched Op must implement ToCFDialect");

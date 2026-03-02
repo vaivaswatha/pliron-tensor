@@ -19,7 +19,10 @@ use pliron_common_dialects::cf::to_llvm::CFToLLVM;
 use pliron_llvm::llvm_sys::{core::LLVMContext, lljit::LLVMLLJIT, target::initialize_native};
 
 use expect_test::expect;
-use pliron_tensor::{memref::conversions::MemrefToCF, tensor::conversions::TensorToMemref};
+use pliron_tensor::{
+    memref::conversions::MemrefToCF,
+    tensor::{conversions::TensorToMemref, runtime::Tensor},
+};
 
 #[test]
 fn test_tensor_to_memref_conversion() {
@@ -350,4 +353,275 @@ fn test_tensor_to_memref_conversion() {
             assert_eq!(result, ((i + j) * 2));
         }
     }
+}
+
+#[test]
+fn test_tensor_from_rust() {
+    let ctx = &mut Context::default();
+
+    let input_ir = r#"
+            builtin.module @test_module {
+              ^entry():
+                llvm.func @test_tensor_add: llvm.func <llvm.void (llvm.ptr, llvm.ptr, llvm.ptr) variadic = false> [] {
+                  ^entry(arg1_p: llvm.ptr, arg2_p: llvm.ptr, res_p: llvm.ptr):
+                    arg1 = llvm.load arg1_p : tensor.ranked<4x4:builtin.integer i64>;
+                    arg2 = llvm.load arg2_p : tensor.ranked<4x4:builtin.integer i64>;
+                    res = tensor.add arg1, arg2 : tensor.ranked<4x4:builtin.integer i64>;
+                    llvm.store *res_p <- res;
+                    llvm.return
+                }
+            }
+            "#;
+
+    let state_stream = state_stream_from_iterator(
+        input_ir.chars(),
+        parsable::State::new(ctx, location::Source::InMemory),
+    );
+    let parsed = spaced(Operation::top_level_parser())
+        .parse(state_stream)
+        .map(|(op, _)| op)
+        .map_err(|err| input_error_noloc!(err));
+
+    let parsed_op = parsed.expect_ok(ctx);
+    let module_op = Operation::get_op::<ModuleOp>(parsed_op, ctx).unwrap();
+    verify_op(&module_op, ctx).expect_ok(ctx);
+
+    collect_rewrite(ctx, TensorToMemref, parsed_op).expect_ok(ctx);
+    collect_rewrite(ctx, MemrefToCF, parsed_op).expect_ok(ctx);
+    collect_rewrite(ctx, CFToLLVM, parsed_op).expect_ok(ctx);
+    verify_op(&module_op, ctx).expect_ok(ctx);
+
+    let print_parsed = format!("{}", module_op.disp(ctx));
+    expect![[r#"
+        builtin.module @test_module 
+        {
+          ^entry_block2v1():
+            llvm.func @test_tensor_add: llvm.func <llvm.void (llvm.ptr , llvm.ptr , llvm.ptr ) variadic = false>
+              [] 
+            {
+              ^entry_block1v1(arg1_p_block1v1_arg0: llvm.ptr , arg2_p_block1v1_arg1: llvm.ptr , res_p_block1v1_arg2: llvm.ptr ):
+                arg1_op4v1_res0 = llvm.load arg1_p_block1v1_arg0  : llvm.struct <{ llvm.ptr , llvm.ptr , builtin.integer i64, llvm.array [2 x builtin.integer i64], llvm.array [2 x builtin.integer i64] }> !0;
+                arg2_op6v1_res0 = llvm.load arg2_p_block1v1_arg1  : llvm.struct <{ llvm.ptr , llvm.ptr , builtin.integer i64, llvm.array [2 x builtin.integer i64], llvm.array [2 x builtin.integer i64] }> !1;
+                op41v3_res0 = llvm.constant <builtin.integer <4: i64>> : builtin.integer i64;
+                op7v5_res0 = llvm.constant <builtin.integer <4: i64>> : builtin.integer i64;
+                op3v5_res0 = llvm.constant <builtin.integer <1: i64>> : builtin.integer i64;
+                op11v3_res0 = llvm.constant <builtin.integer <4: i64>> : builtin.integer i64;
+                op12v3_res0 = llvm.constant <builtin.integer <16: i64>> : builtin.integer i64;
+                op14v1_res0 = llvm.zero : llvm.ptr ;
+                op15v1_res0 = llvm.gep <builtin.integer i64> (op14v1_res0)[Constant(1)] : llvm.ptr ;
+                op16v1_res0 = llvm.ptrtoint op15v1_res0 to builtin.integer i64;
+                op17v1_res0 = llvm.mul op16v1_res0, op12v3_res0 <{nsw=false,nuw=false}>: builtin.integer i64;
+                op19v1_res0 = llvm.call @malloc (op17v1_res0) : llvm.func <llvm.ptr (builtin.integer i64) variadic = false>;
+                op13v3_res0 = llvm.constant <builtin.integer <0: i64>> : builtin.integer i64;
+                op21v1_res0 = llvm.undef : llvm.struct <{ llvm.ptr , llvm.ptr , builtin.integer i64, llvm.array [2 x builtin.integer i64], llvm.array [2 x builtin.integer i64] }>;
+                op22v1_res0 = llvm.insert_value op21v1_res0[0], op19v1_res0 : llvm.struct <{ llvm.ptr , llvm.ptr , builtin.integer i64, llvm.array [2 x builtin.integer i64], llvm.array [2 x builtin.integer i64] }>;
+                op23v1_res0 = llvm.insert_value op22v1_res0[1], op19v1_res0 : llvm.struct <{ llvm.ptr , llvm.ptr , builtin.integer i64, llvm.array [2 x builtin.integer i64], llvm.array [2 x builtin.integer i64] }>;
+                op24v1_res0 = llvm.insert_value op23v1_res0[2], op13v3_res0 : llvm.struct <{ llvm.ptr , llvm.ptr , builtin.integer i64, llvm.array [2 x builtin.integer i64], llvm.array [2 x builtin.integer i64] }>;
+                op25v1_res0 = llvm.undef : llvm.array [2 x builtin.integer i64];
+                op26v1_res0 = llvm.insert_value op25v1_res0[0], op41v3_res0 : llvm.array [2 x builtin.integer i64];
+                op27v1_res0 = llvm.insert_value op26v1_res0[1], op7v5_res0 : llvm.array [2 x builtin.integer i64];
+                op28v1_res0 = llvm.insert_value op24v1_res0[3], op27v1_res0 : llvm.struct <{ llvm.ptr , llvm.ptr , builtin.integer i64, llvm.array [2 x builtin.integer i64], llvm.array [2 x builtin.integer i64] }>;
+                op29v1_res0 = llvm.undef : llvm.array [2 x builtin.integer i64];
+                op30v1_res0 = llvm.insert_value op29v1_res0[0], op11v3_res0 : llvm.array [2 x builtin.integer i64];
+                op31v1_res0 = llvm.insert_value op30v1_res0[1], op3v5_res0 : llvm.array [2 x builtin.integer i64];
+                op32v1_res0 = llvm.insert_value op28v1_res0[4], op31v1_res0 : llvm.struct <{ llvm.ptr , llvm.ptr , builtin.integer i64, llvm.array [2 x builtin.integer i64], llvm.array [2 x builtin.integer i64] }>;
+                op8v5_res0 = llvm.extract_value op32v1_res0[3] : llvm.array [2 x builtin.integer i64];
+                op33v1_res0 = llvm.extract_value op8v5_res0[0] : builtin.integer i64;
+                op34v1_res0 = llvm.extract_value op8v5_res0[1] : builtin.integer i64;
+                op20v3_res0 = llvm.constant <builtin.integer <0: i64>> : builtin.integer i64;
+                op35v3_res0 = llvm.constant <builtin.integer <1: i64>> : builtin.integer i64;
+                llvm.br ^for_op_header_block9v1(op20v3_res0)
+
+              ^for_op_header_block9v1(block9v1_arg0: builtin.integer i64):
+                op42v5_res0 = llvm.icmp block9v1_arg0 <ULT> op33v1_res0 : builtin.integer i1;
+                llvm.cond_br if op42v5_res0 ^entry_block5v1(block9v1_arg0) else ^entry_split_block8v1()
+
+              ^entry_block5v1(iv_block5v1_arg0: builtin.integer i64):
+                llvm.br ^for_op_header_block7v1(op20v3_res0)
+
+              ^for_op_header_block7v1(block7v1_arg0: builtin.integer i64):
+                op37v3_res0 = llvm.icmp block7v1_arg0 <ULT> op34v1_res0 : builtin.integer i1;
+                llvm.cond_br if op37v3_res0 ^entry_block4v1(block7v1_arg0) else ^entry_split_block6v1()
+
+              ^entry_block4v1(iv_block4v1_arg0: builtin.integer i64):
+                llvm.br ^entry_block3v1(iv_block5v1_arg0, iv_block4v1_arg0)
+
+              ^entry_block3v1(block3v1_arg0: builtin.integer i64, block3v1_arg1: builtin.integer i64):
+                op5v5_res0 = llvm.extract_value arg1_op4v1_res0[1] : llvm.ptr ;
+                op43v1_res0 = llvm.extract_value arg1_op4v1_res0[4] : llvm.array [2 x builtin.integer i64];
+                op44v1_res0 = llvm.extract_value op43v1_res0[0] : builtin.integer i64;
+                op45v1_res0 = llvm.extract_value op43v1_res0[1] : builtin.integer i64;
+                op46v1_res0 = llvm.extract_value arg1_op4v1_res0[2] : builtin.integer i64;
+                op47v1_res0 = llvm.gep <builtin.integer i64> (op5v5_res0, op46v1_res0)[OperandIdx(1)] : llvm.ptr ;
+                op48v1_res0 = llvm.mul op44v1_res0, block3v1_arg0 <{nsw=false,nuw=false}>: builtin.integer i64;
+                op49v1_res0 = llvm.mul op45v1_res0, block3v1_arg1 <{nsw=false,nuw=false}>: builtin.integer i64;
+                op50v1_res0 = llvm.add op49v1_res0, op48v1_res0 <{nsw=false,nuw=false}>: builtin.integer i64;
+                op51v1_res0 = llvm.gep <builtin.integer i64> (op47v1_res0, op50v1_res0)[OperandIdx(1)] : llvm.ptr ;
+                op52v1_res0 = llvm.load op51v1_res0  : builtin.integer i64;
+                op38v3_res0 = llvm.extract_value arg2_op6v1_res0[1] : llvm.ptr ;
+                op53v1_res0 = llvm.extract_value arg2_op6v1_res0[4] : llvm.array [2 x builtin.integer i64];
+                op54v1_res0 = llvm.extract_value op53v1_res0[0] : builtin.integer i64;
+                op55v1_res0 = llvm.extract_value op53v1_res0[1] : builtin.integer i64;
+                op56v1_res0 = llvm.extract_value arg2_op6v1_res0[2] : builtin.integer i64;
+                op57v1_res0 = llvm.gep <builtin.integer i64> (op38v3_res0, op56v1_res0)[OperandIdx(1)] : llvm.ptr ;
+                op58v1_res0 = llvm.mul op54v1_res0, block3v1_arg0 <{nsw=false,nuw=false}>: builtin.integer i64;
+                op59v1_res0 = llvm.mul op55v1_res0, block3v1_arg1 <{nsw=false,nuw=false}>: builtin.integer i64;
+                op60v1_res0 = llvm.add op59v1_res0, op58v1_res0 <{nsw=false,nuw=false}>: builtin.integer i64;
+                op61v1_res0 = llvm.gep <builtin.integer i64> (op57v1_res0, op60v1_res0)[OperandIdx(1)] : llvm.ptr ;
+                op62v1_res0 = llvm.load op61v1_res0  : builtin.integer i64;
+                op40v1_res0 = llvm.add op52v1_res0, op62v1_res0 <{nsw=false,nuw=false}>: builtin.integer i64;
+                op39v3_res0 = llvm.extract_value op32v1_res0[1] : llvm.ptr ;
+                op63v1_res0 = llvm.extract_value op32v1_res0[4] : llvm.array [2 x builtin.integer i64];
+                op64v1_res0 = llvm.extract_value op63v1_res0[0] : builtin.integer i64;
+                op65v1_res0 = llvm.extract_value op63v1_res0[1] : builtin.integer i64;
+                op66v1_res0 = llvm.extract_value op32v1_res0[2] : builtin.integer i64;
+                op67v1_res0 = llvm.gep <builtin.integer i64> (op39v3_res0, op66v1_res0)[OperandIdx(1)] : llvm.ptr ;
+                op68v1_res0 = llvm.mul op64v1_res0, block3v1_arg0 <{nsw=false,nuw=false}>: builtin.integer i64;
+                op69v1_res0 = llvm.mul op65v1_res0, block3v1_arg1 <{nsw=false,nuw=false}>: builtin.integer i64;
+                op70v1_res0 = llvm.add op69v1_res0, op68v1_res0 <{nsw=false,nuw=false}>: builtin.integer i64;
+                op71v1_res0 = llvm.gep <builtin.integer i64> (op67v1_res0, op70v1_res0)[OperandIdx(1)] : llvm.ptr ;
+                llvm.store *op71v1_res0 <- op40v1_res0 ;
+                op78v1_res0 = llvm.add iv_block4v1_arg0, op35v3_res0 <{nsw=false,nuw=false}>: builtin.integer i64;
+                llvm.br ^for_op_header_block7v1(op78v1_res0)
+
+              ^entry_split_block6v1():
+                op81v1_res0 = llvm.add iv_block5v1_arg0, op35v3_res0 <{nsw=false,nuw=false}>: builtin.integer i64;
+                llvm.br ^for_op_header_block9v1(op81v1_res0)
+
+              ^entry_split_block8v1():
+                llvm.store *res_p_block1v1_arg2 <- op32v1_res0  !2;
+                llvm.return  !3
+            } !4;
+            llvm.func @malloc: llvm.func <llvm.ptr (builtin.integer i64) variadic = false>
+              []
+        }"#]].assert_eq(&print_parsed);
+
+    let llvm_ctx = LLVMContext::default();
+    let llvm_ir = pliron_llvm::to_llvm_ir::convert_module(ctx, &llvm_ctx, module_op).expect_ok(ctx);
+    llvm_ir
+        .verify()
+        .inspect_err(|e| println!("LLVM-IR verification failed: {}", e))
+        .unwrap();
+
+    expect![[r#"
+        ; ModuleID = 'test_module'
+        source_filename = "test_module"
+
+        define void @test_tensor_add(ptr %0, ptr %1, ptr %2) {
+        entry_block1v1:
+          %arg1_op4v1_res0 = load { ptr, ptr, i64, [2 x i64], [2 x i64] }, ptr %0, align 8
+          %arg2_op6v1_res0 = load { ptr, ptr, i64, [2 x i64], [2 x i64] }, ptr %1, align 8
+          %op17v1_res0 = mul i64 ptrtoint (ptr getelementptr (i64, ptr null, i32 1) to i64), 16
+          %op19v1_res0 = call ptr @malloc(i64 %op17v1_res0)
+          %op22v1_res0 = insertvalue { ptr, ptr, i64, [2 x i64], [2 x i64] } undef, ptr %op19v1_res0, 0
+          %op23v1_res0 = insertvalue { ptr, ptr, i64, [2 x i64], [2 x i64] } %op22v1_res0, ptr %op19v1_res0, 1
+          %op24v1_res0 = insertvalue { ptr, ptr, i64, [2 x i64], [2 x i64] } %op23v1_res0, i64 0, 2
+          %op28v1_res0 = insertvalue { ptr, ptr, i64, [2 x i64], [2 x i64] } %op24v1_res0, [2 x i64] [i64 4, i64 4], 3
+          %op32v1_res0 = insertvalue { ptr, ptr, i64, [2 x i64], [2 x i64] } %op28v1_res0, [2 x i64] [i64 4, i64 1], 4
+          %op8v5_res0 = extractvalue { ptr, ptr, i64, [2 x i64], [2 x i64] } %op32v1_res0, 3
+          %op33v1_res0 = extractvalue [2 x i64] %op8v5_res0, 0
+          %op34v1_res0 = extractvalue [2 x i64] %op8v5_res0, 1
+          br label %for_op_header_block9v1
+
+        for_op_header_block9v1:                           ; preds = %entry_split_block6v1, %entry_block1v1
+          %block9v1_arg0 = phi i64 [ 0, %entry_block1v1 ], [ %op81v1_res0, %entry_split_block6v1 ]
+          %op42v5_res0 = icmp ult i64 %block9v1_arg0, %op33v1_res0
+          br i1 %op42v5_res0, label %entry_block5v1, label %entry_split_block8v1
+
+        entry_block5v1:                                   ; preds = %for_op_header_block9v1
+          %iv_block5v1_arg0 = phi i64 [ %block9v1_arg0, %for_op_header_block9v1 ]
+          br label %for_op_header_block7v1
+
+        for_op_header_block7v1:                           ; preds = %entry_block3v1, %entry_block5v1
+          %block7v1_arg0 = phi i64 [ 0, %entry_block5v1 ], [ %op78v1_res0, %entry_block3v1 ]
+          %op37v3_res0 = icmp ult i64 %block7v1_arg0, %op34v1_res0
+          br i1 %op37v3_res0, label %entry_block4v1, label %entry_split_block6v1
+
+        entry_block4v1:                                   ; preds = %for_op_header_block7v1
+          %iv_block4v1_arg0 = phi i64 [ %block7v1_arg0, %for_op_header_block7v1 ]
+          br label %entry_block3v1
+
+        entry_block3v1:                                   ; preds = %entry_block4v1
+          %block3v1_arg0 = phi i64 [ %iv_block5v1_arg0, %entry_block4v1 ]
+          %block3v1_arg1 = phi i64 [ %iv_block4v1_arg0, %entry_block4v1 ]
+          %op5v5_res0 = extractvalue { ptr, ptr, i64, [2 x i64], [2 x i64] } %arg1_op4v1_res0, 1
+          %op43v1_res0 = extractvalue { ptr, ptr, i64, [2 x i64], [2 x i64] } %arg1_op4v1_res0, 4
+          %op44v1_res0 = extractvalue [2 x i64] %op43v1_res0, 0
+          %op45v1_res0 = extractvalue [2 x i64] %op43v1_res0, 1
+          %op46v1_res0 = extractvalue { ptr, ptr, i64, [2 x i64], [2 x i64] } %arg1_op4v1_res0, 2
+          %op47v1_res0 = getelementptr i64, ptr %op5v5_res0, i64 %op46v1_res0
+          %op48v1_res0 = mul i64 %op44v1_res0, %block3v1_arg0
+          %op49v1_res0 = mul i64 %op45v1_res0, %block3v1_arg1
+          %op50v1_res0 = add i64 %op49v1_res0, %op48v1_res0
+          %op51v1_res0 = getelementptr i64, ptr %op47v1_res0, i64 %op50v1_res0
+          %op52v1_res0 = load i64, ptr %op51v1_res0, align 4
+          %op38v3_res0 = extractvalue { ptr, ptr, i64, [2 x i64], [2 x i64] } %arg2_op6v1_res0, 1
+          %op53v1_res0 = extractvalue { ptr, ptr, i64, [2 x i64], [2 x i64] } %arg2_op6v1_res0, 4
+          %op54v1_res0 = extractvalue [2 x i64] %op53v1_res0, 0
+          %op55v1_res0 = extractvalue [2 x i64] %op53v1_res0, 1
+          %op56v1_res0 = extractvalue { ptr, ptr, i64, [2 x i64], [2 x i64] } %arg2_op6v1_res0, 2
+          %op57v1_res0 = getelementptr i64, ptr %op38v3_res0, i64 %op56v1_res0
+          %op58v1_res0 = mul i64 %op54v1_res0, %block3v1_arg0
+          %op59v1_res0 = mul i64 %op55v1_res0, %block3v1_arg1
+          %op60v1_res0 = add i64 %op59v1_res0, %op58v1_res0
+          %op61v1_res0 = getelementptr i64, ptr %op57v1_res0, i64 %op60v1_res0
+          %op62v1_res0 = load i64, ptr %op61v1_res0, align 4
+          %op40v1_res0 = add i64 %op52v1_res0, %op62v1_res0
+          %op39v3_res0 = extractvalue { ptr, ptr, i64, [2 x i64], [2 x i64] } %op32v1_res0, 1
+          %op63v1_res0 = extractvalue { ptr, ptr, i64, [2 x i64], [2 x i64] } %op32v1_res0, 4
+          %op64v1_res0 = extractvalue [2 x i64] %op63v1_res0, 0
+          %op65v1_res0 = extractvalue [2 x i64] %op63v1_res0, 1
+          %op66v1_res0 = extractvalue { ptr, ptr, i64, [2 x i64], [2 x i64] } %op32v1_res0, 2
+          %op67v1_res0 = getelementptr i64, ptr %op39v3_res0, i64 %op66v1_res0
+          %op68v1_res0 = mul i64 %op64v1_res0, %block3v1_arg0
+          %op69v1_res0 = mul i64 %op65v1_res0, %block3v1_arg1
+          %op70v1_res0 = add i64 %op69v1_res0, %op68v1_res0
+          %op71v1_res0 = getelementptr i64, ptr %op67v1_res0, i64 %op70v1_res0
+          store i64 %op40v1_res0, ptr %op71v1_res0, align 4
+          %op78v1_res0 = add i64 %iv_block4v1_arg0, 1
+          br label %for_op_header_block7v1
+
+        entry_split_block6v1:                             ; preds = %for_op_header_block7v1
+          %op81v1_res0 = add i64 %iv_block5v1_arg0, 1
+          br label %for_op_header_block9v1
+
+        entry_split_block8v1:                             ; preds = %for_op_header_block9v1
+          store { ptr, ptr, i64, [2 x i64], [2 x i64] } %op32v1_res0, ptr %2, align 8
+          ret void
+        }
+
+        declare ptr @malloc(i64)
+    "#]].assert_eq(&llvm_ir.to_string());
+
+    // Let's try and execute this function
+    initialize_native().expect("Failed to initialize native target for LLVM execution");
+    let jit = LLVMLLJIT::new_with_default_builder().expect("Failed to create LLJIT");
+    jit.add_module(llvm_ir)
+        .expect("Failed to add module to JIT");
+    let symbol_addr = jit
+        .lookup_symbol("test_tensor_add")
+        .expect("Failed to lookup symbol");
+    assert!(symbol_addr != 0);
+
+    let t1 = Tensor::new(
+        [4, 4],
+        &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+    )
+    .unwrap();
+    let t2 = Tensor::new(
+        [4, 4],
+        &[16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
+    )
+    .unwrap();
+    let mut res = Tensor::new([4, 4], &[0; 16]).unwrap();
+    let expected = Tensor::new([4, 4], &[17; 16]).unwrap();
+
+    let f = unsafe {
+        std::mem::transmute::<
+            u64,
+            extern "C" fn(&Tensor<2, u64>, &Tensor<2, u64>, &mut Tensor<2, u64>),
+        >(symbol_addr)
+    };
+    f(&t1, &t2, &mut res);
+    assert_eq!(res, expected);
 }
