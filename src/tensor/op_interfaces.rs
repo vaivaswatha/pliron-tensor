@@ -2,18 +2,17 @@
 
 use pliron::{
     builtin::op_interfaces::{
-        AtLeastNOpdsInterface, AtLeastNResultsInterface, NOpdsInterface, OneResultInterface,
-        SameOperandsAndResultType,
+        AllOperandsOfType, AllResultsOfType, NOpdsInterface, NResultsInterface, OneResultInterface,
     },
     context::Context,
     derive::op_interface,
-    location::Located,
     op::Op,
     operation::Operation,
     result::Result,
     value::Value,
-    verify_err,
 };
+
+use crate::memref::op_interfaces::CompatibleShapesOp;
 
 use super::types::RankedTensorType;
 
@@ -26,27 +25,23 @@ pub enum BinArithOpErr {
     InvalidResult,
 }
 
+/// Interface for binary arithmetic tensor ops (e.g., AddOp).
+/// These ops must have exactly 2 operands and 1 result,
+/// and the operand and result types must all be the RankedTensorType
+/// with the same rank, shape (for non-dynamic dimensions) and element type.
 #[op_interface]
 pub trait BinaryTensorOpInterface:
     OneResultInterface
-    + SameOperandsAndResultType
+    + NResultsInterface<1>
+    + AllResultsOfType<RankedTensorType>
+    + AllOperandsOfType<RankedTensorType>
     + NOpdsInterface<2>
-    + AtLeastNResultsInterface<1>
-    + AtLeastNOpdsInterface<1>
+    + CompatibleShapesOp<RankedTensorType>
 {
-    fn verify(op: &dyn Op, ctx: &Context) -> Result<()>
+    fn verify(_op: &dyn Op, _ctx: &Context) -> Result<()>
     where
         Self: Sized,
     {
-        let op = op.as_any().downcast_ref::<Self>().unwrap();
-        let opr = op.get_operation().deref(ctx);
-        if opr.get_num_operands() != 2 {
-            return verify_err!(opr.loc(), BinArithOpErr::InvalidNumOperands);
-        }
-        let res_ty = OneResultInterface::result_type(op, ctx).deref(ctx);
-        if !res_ty.is::<RankedTensorType>() {
-            return verify_err!(opr.loc(), BinArithOpErr::InvalidResult);
-        }
         Ok(())
     }
 

@@ -5,7 +5,7 @@ use pliron::{
         op_interfaces::{
             CallOpCallable, OneRegionInterface, OneResultInterface, SymbolOpInterface,
         },
-        types::Signedness,
+        types::{IntegerType, Signedness},
     },
     context::{Context, Ptr},
     derive::{op_interface_impl, type_interface_impl},
@@ -39,7 +39,8 @@ use pliron_llvm::{
 
 use crate::memref::{
     descriptor,
-    ops::{AllocOp, GenerateOp, LoadOp, StoreOp, YieldOp},
+    op_interfaces::BinaryMemrefOpInterface,
+    ops::{AddOp, AllocOp, GenerateOp, LoadOp, StoreOp, YieldOp},
     type_interfaces::{MultiDimensionalType, ShapedType},
     types::RankedMemrefType,
 };
@@ -136,6 +137,8 @@ impl ToCFDialect for GenerateOp {
         let sizes = descriptor::unpack_sizes(ctx, rewriter, self.get_destination_memref(ctx));
 
         // Update the argument types of the body entry block to LLVM types.
+        // TODO: We shouldn't be converting to LLVM types here, but without a
+        //   more general way to convert block arguments, this is a workaround.
         let region = self.get_region(ctx);
         let args = region
             .deref(ctx)
@@ -264,6 +267,94 @@ impl ToCFDialect for LoadOp {
         rewriter.append_op(ctx, load_op);
         rewriter.replace_operation(ctx, self.get_operation(), load_op.get_operation());
         Ok(())
+    }
+}
+
+trait BinaryMemrefOpToCF: BinaryMemrefOpInterface {
+    fn rewrite(&self, ctx: &mut Context, rewriter: &mut MatchRewriter) -> Result<()> {
+        // Compute the loop upper bounds based on the memref operand.
+        let sizes = descriptor::unpack_sizes(ctx, rewriter, self.get_result_memref(ctx));
+
+        let const_index_0 = IndexConstantOp::new(ctx, 0);
+        let const_index_1 = IndexConstantOp::new(ctx, 1);
+        rewriter.append_op(ctx, const_index_0);
+        rewriter.append_op(ctx, const_index_1);
+
+        let lbs = vec![const_index_0.get_result(ctx); sizes.len()];
+        let steps = vec![const_index_1.get_result(ctx); sizes.len()];
+
+        let ndforop = {
+            let scoped_rewriter = ScopedRewriter::new(rewriter, OpInsertionPoint::Unset);
+            struct State<'a> {
+                rewriter: ScopedRewriter<'a, Recorder, IRRewriter<Recorder>>,
+                memref_result: Value,
+                memref_lhs: Value,
+                memref_rhs: Value,
+                op_fn: fn(&mut Context, Value, Value) -> Ptr<Operation>,
+            }
+            let mut state = State {
+                rewriter: scoped_rewriter,
+                memref_result: self.get_result_memref(ctx),
+                memref_lhs: self.get_lhs_memref(ctx),
+                memref_rhs: self.get_rhs_memref(ctx),
+                op_fn: self.build_llvm_op(),
+            };
+            NDForOp::new(
+                ctx,
+                lbs,
+                sizes,
+                steps,
+                |ctx, state, inserter, indices| {
+                    let rewriter = &mut state.rewriter;
+                    rewriter.set_insertion_point(inserter.get_insertion_point());
+
+                    // TODO: How to get element type when the operands have been lowered already?
+                    let element_ty = IntegerType::get(ctx, 64, Signedness::Signless).into();
+                    let lhs_loaded =
+                        LoadOp::new(ctx, element_ty, state.memref_lhs, indices.clone());
+                    let rhs_loaded =
+                        LoadOp::new(ctx, element_ty, state.memref_rhs, indices.clone());
+                    rewriter.append_op(ctx, lhs_loaded);
+                    rewriter.append_op(ctx, rhs_loaded);
+
+                    let result =
+                        (state.op_fn)(ctx, lhs_loaded.get_result(ctx), rhs_loaded.get_result(ctx));
+                    rewriter.append_operation(ctx, result);
+                    let result = result.deref(ctx).get_result(0);
+
+                    let store_op = StoreOp::new(ctx, result, state.memref_result, indices);
+                    rewriter.append_op(ctx, store_op);
+                },
+                &mut state,
+            )
+        };
+
+        rewriter.append_op(ctx, ndforop);
+        rewriter.replace_operation(ctx, self.get_operation(), ndforop.get_operation());
+        Ok(())
+    }
+
+    fn build_llvm_op(&self) -> fn(&mut Context, Value, Value) -> Ptr<Operation>;
+}
+
+impl BinaryMemrefOpToCF for AddOp {
+    fn build_llvm_op(&self) -> fn(&mut Context, Value, Value) -> Ptr<Operation> {
+        |ctx, lhs, rhs| {
+            pliron_llvm::ops::AddOp::new_with_overflow_flag(
+                ctx,
+                lhs,
+                rhs,
+                IntegerOverflowFlagsAttr::default(),
+            )
+            .get_operation()
+        }
+    }
+}
+
+#[op_interface_impl]
+impl ToCFDialect for AddOp {
+    fn rewrite(&self, ctx: &mut Context, rewriter: &mut MatchRewriter) -> Result<()> {
+        <Self as BinaryMemrefOpToCF>::rewrite(self, ctx, rewriter)
     }
 }
 

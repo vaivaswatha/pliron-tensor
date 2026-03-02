@@ -10,16 +10,16 @@ use pliron::{
         SameOperandsType, SameResultsType, SingleBlockRegionInterface,
     },
     common_traits::Verify,
-    context::Context,
+    context::{Context, Ptr},
     derive::pliron_op,
     irbuild::{
-        inserter::{BlockInsertionPoint, IRInserter, Inserter},
+        inserter::{BlockInsertionPoint, IRInserter, Inserter, OpInsertionPoint},
         listener::DummyListener,
     },
     op::Op,
     operation::Operation,
     result::Result,
-    r#type::{TypePtr, Typed, type_cast},
+    r#type::{TypeObj, TypePtr, Typed, type_cast},
     value::Value,
     verify_err, verify_error,
 };
@@ -29,7 +29,7 @@ use pliron_common_dialects::{
 };
 
 use crate::memref::{
-    op_interfaces::GenerateOpInterface,
+    op_interfaces::{BinaryMemrefOpInterface, CompatibleShapesOp, GenerateOpInterface},
     type_interfaces::{MultiDimensionalType, ShapedType},
     types::RankedMemrefType,
 };
@@ -166,13 +166,14 @@ impl GenerateOp {
             vec![],
             vec![memref],
             vec![],
-            0,
+            1,
         );
         let opop = Self { op };
 
         let rank = {
             let memref_type = memref.get_type(ctx).deref(ctx);
-            let memref_type = type_cast::<RankedMemrefType>(&**memref_type)
+            let memref_type = memref_type
+                .downcast_ref::<RankedMemrefType>()
                 .expect("The memref operand must be of ranked memref type");
 
             memref_type.rank()
@@ -192,8 +193,8 @@ impl GenerateOp {
         let indices = entry_block.deref(ctx).arguments().collect();
         let yield_value = body_builder(ctx, body_builder_state, op_inserter, indices);
         let yield_op = YieldOp::new(ctx, yield_value);
+        op_inserter.set_insertion_point(OpInsertionPoint::AtBlockEnd(opop.get_exit(ctx)));
         op_inserter.append_op(ctx, yield_op);
-
         opop
     }
 
@@ -448,13 +449,12 @@ impl Verify for LoadOp {
 
 impl LoadOp {
     /// Create a new `LoadOp` with the specified operands and result type.
-    pub fn new(ctx: &mut Context, memref: Value, indices: Vec<Value>) -> Self {
-        let element_ty = memref
-            .get_type(ctx)
-            .deref(ctx)
-            .downcast_ref::<RankedMemrefType>()
-            .expect("Memref value is not of ranked memref type")
-            .element_type();
+    pub fn new(
+        ctx: &mut Context,
+        element_ty: Ptr<TypeObj>,
+        memref: Value,
+        indices: Vec<Value>,
+    ) -> Self {
         let (operands, sizes) = Self::compute_segment_sizes(vec![vec![memref], indices]);
         let op = Operation::new(
             ctx,
@@ -497,7 +497,25 @@ impl LoadOp {
         SameOperandsType,
         AtLeastNOpdsInterface<1>,
         AllOperandsOfType<RankedMemrefType>,
+        CompatibleShapesOp<RankedMemrefType>,
+        AllResultsOfType<RankedMemrefType>,
+        BinaryMemrefOpInterface,
     ],
     verifier = "succ"
 )]
 pub struct AddOp;
+
+impl AddOp {
+    /// Create a new `AddOp` with the specified operands.
+    pub fn new(ctx: &mut Context, res: Value, lhs: Value, rhs: Value) -> Self {
+        let op = Operation::new(
+            ctx,
+            Self::get_concrete_op_info(),
+            vec![],
+            vec![res, lhs, rhs],
+            vec![],
+            0,
+        );
+        Self { op }
+    }
+}
