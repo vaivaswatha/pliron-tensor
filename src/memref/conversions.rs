@@ -55,7 +55,7 @@ pub enum AllocOpRewriteError {
 
 // Replace [AllocOp] with
 // * Compute the sizes, strides and total number of elements based on the memref type.
-// * An `malloc` that allocates memory for the total number of elements.
+// * A `malloc` that allocates memory for the total number of elements.
 // * Build the memref descriptor by storing the allocated pointer, aligned pointer,
 //   offset, sizes and strides to the appropriate fields in the descriptor.
 // * Replace uses of the original [AllocOp]'s result with the newly built descriptor.

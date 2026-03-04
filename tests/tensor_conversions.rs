@@ -604,24 +604,32 @@ fn test_tensor_from_rust() {
     assert!(symbol_addr != 0);
 
     let t1 = Tensor::new(
-        [4, 4],
+        [4, 4].to_vec(),
         &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
     )
     .unwrap();
     let t2 = Tensor::new(
-        [4, 4],
+        [4, 4].to_vec(),
         &[16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
     )
     .unwrap();
-    let mut res = Tensor::new([4, 4], &[0; 16]).unwrap();
-    let expected = Tensor::new([4, 4], &[17; 16]).unwrap();
+    let res = Tensor::new([4, 4].to_vec(), &[0; 16]).unwrap();
+    let expected = Tensor::new([4, 4].to_vec(), &[17; 16]).unwrap();
 
     let f = unsafe {
-        std::mem::transmute::<
-            u64,
-            extern "C" fn(&Tensor<2, u64>, &Tensor<2, u64>, &mut Tensor<2, u64>),
-        >(symbol_addr)
+        std::mem::transmute::<u64, extern "C" fn(*const u8, *const u8, *mut u8) -> ()>(symbol_addr)
     };
-    f(&t1, &t2, &mut res);
+
+    let res = unsafe {
+        let mut res_descr = res.tensor_descriptor();
+
+        f(
+            t1.tensor_descriptor().as_ptr(),
+            t2.tensor_descriptor().as_ptr(),
+            res_descr.as_mut_ptr(),
+        );
+        Tensor::from_tensor_descriptor(res_descr.as_ptr(), 2)
+    };
+
     assert_eq!(res, expected);
 }
