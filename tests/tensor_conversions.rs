@@ -21,7 +21,7 @@ use pliron_llvm::llvm_sys::{core::LLVMContext, lljit::LLVMLLJIT, target::initial
 use expect_test::expect;
 use pliron_tensor::{
     memref::conversions::MemrefToCF,
-    tensor::{conversions::TensorToMemref, runtime::Tensor},
+    tensor::{conversions::TensorToMemref, runtime_utils::TensorDesciptor},
 };
 
 #[test]
@@ -603,33 +603,47 @@ fn test_tensor_from_rust() {
         .expect("Failed to lookup symbol");
     assert!(symbol_addr != 0);
 
-    let t1 = Tensor::new(
+    let t1 = TensorDesciptor::new(
         [4, 4].to_vec(),
-        &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
-    )
-    .unwrap();
-    let t2 = Tensor::new(
+        std::mem::size_of::<u64>(),
+        [1u64, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16].as_ptr() as *const u8,
+    );
+    let t2 = TensorDesciptor::new(
         [4, 4].to_vec(),
-        &[16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
-    )
-    .unwrap();
-    let res = Tensor::new([4, 4].to_vec(), &[0; 16]).unwrap();
-    let expected = Tensor::new([4, 4].to_vec(), &[17; 16]).unwrap();
+        std::mem::size_of::<u64>(),
+        [16u64, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1].as_ptr() as *const u8,
+    );
+
+    // We build the result descriptor to build the result IR descriptor, where the executed
+    // function will write the result descriptor of the addition.
+    let res_descr = TensorDesciptor::new(
+        [4, 4].to_vec(),
+        std::mem::size_of::<u64>(),
+        std::ptr::null::<u8>(),
+    );
 
     let f = unsafe {
         std::mem::transmute::<u64, extern "C" fn(*const u8, *const u8, *mut u8) -> ()>(symbol_addr)
     };
 
-    let res = unsafe {
-        let mut res_descr = res.tensor_descriptor();
+    let mut res_ir_descr = res_descr.build_ir_descriptor();
 
-        f(
-            t1.tensor_descriptor().as_ptr(),
-            t2.tensor_descriptor().as_ptr(),
-            res_descr.as_mut_ptr(),
-        );
-        Tensor::from_tensor_descriptor(res_descr.as_ptr(), 2)
+    f(
+        t1.build_ir_descriptor().as_ptr(),
+        t2.build_ir_descriptor().as_ptr(),
+        res_ir_descr.as_mut_ptr(),
+    );
+
+    let res_tensor_descr = unsafe {
+        TensorDesciptor::from_ir_descriptor(res_ir_descr.as_ptr(), 2, std::mem::size_of::<u64>())
     };
 
-    assert_eq!(res, expected);
+    let res_slice = unsafe {
+        std::slice::from_raw_parts(
+            res_tensor_descr.aligned_ptr() as *const u64,
+            res_tensor_descr.num_elements(),
+        )
+    };
+
+    assert_eq!(res_slice, &[17; 16]);
 }
