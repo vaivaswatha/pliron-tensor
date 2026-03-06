@@ -356,7 +356,7 @@ fn test_tensor_to_memref_conversion() {
 }
 
 #[test]
-fn test_tensor_from_rust() {
+fn test_int_tensor_from_rust() {
     let ctx = &mut Context::default();
 
     let input_ir = r#"
@@ -646,4 +646,197 @@ fn test_tensor_from_rust() {
     };
 
     assert_eq!(res_slice, &[17; 16]);
+}
+
+#[test]
+fn test_float_tensor_from_rust() {
+    let ctx = &mut Context::default();
+
+    let input_ir = r#"
+      builtin.module @test_module {
+        ^entry():
+        llvm.func @test_tensor_add_float: llvm.func <llvm.void (llvm.ptr, llvm.ptr, llvm.ptr) variadic = false> [] {
+          ^entry(arg1_p: llvm.ptr, arg2_p: llvm.ptr, res_p: llvm.ptr):
+          arg1 = llvm.load arg1_p : tensor.ranked<4x4:builtin.fp64>;
+          arg2 = llvm.load arg2_p : tensor.ranked<4x4:builtin.fp64>;
+          res = tensor.add arg1, arg2 : tensor.ranked<4x4:builtin.fp64>;
+          llvm.store *res_p <- res;
+          llvm.return
+        }
+      }
+      "#;
+
+    let state_stream = state_stream_from_iterator(
+        input_ir.chars(),
+        parsable::State::new(ctx, location::Source::InMemory),
+    );
+    let parsed = spaced(Operation::top_level_parser())
+        .parse(state_stream)
+        .map(|(op, _)| op)
+        .map_err(|err| input_error_noloc!(err));
+
+    let parsed_op = parsed.expect_ok(ctx);
+    let module_op = Operation::get_op::<ModuleOp>(parsed_op, ctx).unwrap();
+    verify_op(&module_op, ctx).expect_ok(ctx);
+
+    collect_rewrite(ctx, TensorToMemref, parsed_op).expect_ok(ctx);
+    collect_rewrite(ctx, MemrefToCF, parsed_op).expect_ok(ctx);
+    collect_rewrite(ctx, CFToLLVM, parsed_op).expect_ok(ctx);
+    verify_op(&module_op, ctx).expect_ok(ctx);
+
+    let llvm_ctx = LLVMContext::default();
+    let llvm_ir = pliron_llvm::to_llvm_ir::convert_module(ctx, &llvm_ctx, module_op).expect_ok(ctx);
+    llvm_ir
+        .verify()
+        .inspect_err(|e| println!("LLVM-IR verification failed: {}", e))
+        .unwrap();
+
+    expect![[r#"
+        ; ModuleID = 'test_module'
+        source_filename = "test_module"
+
+        define void @test_tensor_add_float(ptr %0, ptr %1, ptr %2) {
+        entry_block1v1:
+          %arg1_op4v1_res0 = load { ptr, ptr, i64, [2 x i64], [2 x i64] }, ptr %0, align 8
+          %arg2_op6v1_res0 = load { ptr, ptr, i64, [2 x i64], [2 x i64] }, ptr %1, align 8
+          %op17v1_res0 = mul i64 ptrtoint (ptr getelementptr (double, ptr null, i32 1) to i64), 16
+          %op19v1_res0 = call ptr @malloc(i64 %op17v1_res0)
+          %op22v1_res0 = insertvalue { ptr, ptr, i64, [2 x i64], [2 x i64] } undef, ptr %op19v1_res0, 0
+          %op23v1_res0 = insertvalue { ptr, ptr, i64, [2 x i64], [2 x i64] } %op22v1_res0, ptr %op19v1_res0, 1
+          %op24v1_res0 = insertvalue { ptr, ptr, i64, [2 x i64], [2 x i64] } %op23v1_res0, i64 0, 2
+          %op28v1_res0 = insertvalue { ptr, ptr, i64, [2 x i64], [2 x i64] } %op24v1_res0, [2 x i64] [i64 4, i64 4], 3
+          %op32v1_res0 = insertvalue { ptr, ptr, i64, [2 x i64], [2 x i64] } %op28v1_res0, [2 x i64] [i64 4, i64 1], 4
+          %op8v5_res0 = extractvalue { ptr, ptr, i64, [2 x i64], [2 x i64] } %op32v1_res0, 3
+          %op33v1_res0 = extractvalue [2 x i64] %op8v5_res0, 0
+          %op34v1_res0 = extractvalue [2 x i64] %op8v5_res0, 1
+          br label %for_op_header_block9v1
+
+        for_op_header_block9v1:                           ; preds = %entry_split_block6v1, %entry_block1v1
+          %block9v1_arg0 = phi i64 [ 0, %entry_block1v1 ], [ %op81v1_res0, %entry_split_block6v1 ]
+          %op42v5_res0 = icmp ult i64 %block9v1_arg0, %op33v1_res0
+          br i1 %op42v5_res0, label %entry_block5v1, label %entry_split_block8v1
+
+        entry_block5v1:                                   ; preds = %for_op_header_block9v1
+          %iv_block5v1_arg0 = phi i64 [ %block9v1_arg0, %for_op_header_block9v1 ]
+          br label %for_op_header_block7v1
+
+        for_op_header_block7v1:                           ; preds = %entry_block3v1, %entry_block5v1
+          %block7v1_arg0 = phi i64 [ 0, %entry_block5v1 ], [ %op78v1_res0, %entry_block3v1 ]
+          %op37v3_res0 = icmp ult i64 %block7v1_arg0, %op34v1_res0
+          br i1 %op37v3_res0, label %entry_block4v1, label %entry_split_block6v1
+
+        entry_block4v1:                                   ; preds = %for_op_header_block7v1
+          %iv_block4v1_arg0 = phi i64 [ %block7v1_arg0, %for_op_header_block7v1 ]
+          br label %entry_block3v1
+
+        entry_block3v1:                                   ; preds = %entry_block4v1
+          %block3v1_arg0 = phi i64 [ %iv_block5v1_arg0, %entry_block4v1 ]
+          %block3v1_arg1 = phi i64 [ %iv_block4v1_arg0, %entry_block4v1 ]
+          %op5v5_res0 = extractvalue { ptr, ptr, i64, [2 x i64], [2 x i64] } %arg1_op4v1_res0, 1
+          %op43v1_res0 = extractvalue { ptr, ptr, i64, [2 x i64], [2 x i64] } %arg1_op4v1_res0, 4
+          %op44v1_res0 = extractvalue [2 x i64] %op43v1_res0, 0
+          %op45v1_res0 = extractvalue [2 x i64] %op43v1_res0, 1
+          %op46v1_res0 = extractvalue { ptr, ptr, i64, [2 x i64], [2 x i64] } %arg1_op4v1_res0, 2
+          %op47v1_res0 = getelementptr double, ptr %op5v5_res0, i64 %op46v1_res0
+          %op48v1_res0 = mul i64 %op44v1_res0, %block3v1_arg0
+          %op49v1_res0 = mul i64 %op45v1_res0, %block3v1_arg1
+          %op50v1_res0 = add i64 %op49v1_res0, %op48v1_res0
+          %op51v1_res0 = getelementptr double, ptr %op47v1_res0, i64 %op50v1_res0
+          %op52v1_res0 = load double, ptr %op51v1_res0, align 8
+          %op38v3_res0 = extractvalue { ptr, ptr, i64, [2 x i64], [2 x i64] } %arg2_op6v1_res0, 1
+          %op53v1_res0 = extractvalue { ptr, ptr, i64, [2 x i64], [2 x i64] } %arg2_op6v1_res0, 4
+          %op54v1_res0 = extractvalue [2 x i64] %op53v1_res0, 0
+          %op55v1_res0 = extractvalue [2 x i64] %op53v1_res0, 1
+          %op56v1_res0 = extractvalue { ptr, ptr, i64, [2 x i64], [2 x i64] } %arg2_op6v1_res0, 2
+          %op57v1_res0 = getelementptr double, ptr %op38v3_res0, i64 %op56v1_res0
+          %op58v1_res0 = mul i64 %op54v1_res0, %block3v1_arg0
+          %op59v1_res0 = mul i64 %op55v1_res0, %block3v1_arg1
+          %op60v1_res0 = add i64 %op59v1_res0, %op58v1_res0
+          %op61v1_res0 = getelementptr double, ptr %op57v1_res0, i64 %op60v1_res0
+          %op62v1_res0 = load double, ptr %op61v1_res0, align 8
+          %op40v1_res0 = fadd double %op52v1_res0, %op62v1_res0
+          %op39v3_res0 = extractvalue { ptr, ptr, i64, [2 x i64], [2 x i64] } %op32v1_res0, 1
+          %op63v1_res0 = extractvalue { ptr, ptr, i64, [2 x i64], [2 x i64] } %op32v1_res0, 4
+          %op64v1_res0 = extractvalue [2 x i64] %op63v1_res0, 0
+          %op65v1_res0 = extractvalue [2 x i64] %op63v1_res0, 1
+          %op66v1_res0 = extractvalue { ptr, ptr, i64, [2 x i64], [2 x i64] } %op32v1_res0, 2
+          %op67v1_res0 = getelementptr double, ptr %op39v3_res0, i64 %op66v1_res0
+          %op68v1_res0 = mul i64 %op64v1_res0, %block3v1_arg0
+          %op69v1_res0 = mul i64 %op65v1_res0, %block3v1_arg1
+          %op70v1_res0 = add i64 %op69v1_res0, %op68v1_res0
+          %op71v1_res0 = getelementptr double, ptr %op67v1_res0, i64 %op70v1_res0
+          store double %op40v1_res0, ptr %op71v1_res0, align 8
+          %op78v1_res0 = add i64 %iv_block4v1_arg0, 1
+          br label %for_op_header_block7v1
+
+        entry_split_block6v1:                             ; preds = %for_op_header_block7v1
+          %op81v1_res0 = add i64 %iv_block5v1_arg0, 1
+          br label %for_op_header_block9v1
+
+        entry_split_block8v1:                             ; preds = %for_op_header_block9v1
+          store { ptr, ptr, i64, [2 x i64], [2 x i64] } %op32v1_res0, ptr %2, align 8
+          ret void
+        }
+
+        declare ptr @malloc(i64)
+    "#]].assert_eq(&llvm_ir.to_string());
+
+    initialize_native().expect("Failed to initialize native target for LLVM execution");
+    let jit = LLVMLLJIT::new_with_default_builder().expect("Failed to create LLJIT");
+    jit.add_module(llvm_ir)
+        .expect("Failed to add module to JIT");
+    let symbol_addr = jit
+        .lookup_symbol("test_tensor_add_float")
+        .expect("Failed to lookup symbol");
+    assert!(symbol_addr != 0);
+
+    let t1 = TensorDesciptor::new(
+        [4, 4].to_vec(),
+        std::mem::size_of::<f64>(),
+        [
+            1.0f64, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0,
+            16.0,
+        ]
+        .as_ptr() as *const u8,
+    );
+    let t2 = TensorDesciptor::new(
+        [4, 4].to_vec(),
+        std::mem::size_of::<f64>(),
+        [
+            16.0f64, 15.0, 14.0, 13.0, 12.0, 11.0, 10.0, 9.0, 8.0, 7.0, 6.0, 5.0, 4.0, 3.0, 2.0,
+            1.0,
+        ]
+        .as_ptr() as *const u8,
+    );
+
+    let res_descr = TensorDesciptor::new(
+        [4, 4].to_vec(),
+        std::mem::size_of::<f64>(),
+        std::ptr::null::<u8>(),
+    );
+
+    let f = unsafe {
+        std::mem::transmute::<u64, extern "C" fn(*const u8, *const u8, *mut u8) -> ()>(symbol_addr)
+    };
+
+    let mut res_ir_descr = res_descr.build_ir_descriptor();
+
+    f(
+        t1.build_ir_descriptor().as_ptr(),
+        t2.build_ir_descriptor().as_ptr(),
+        res_ir_descr.as_mut_ptr(),
+    );
+
+    let res_tensor_descr = unsafe {
+        TensorDesciptor::from_ir_descriptor(res_ir_descr.as_ptr(), 2, std::mem::size_of::<f64>())
+    };
+
+    let res_slice = unsafe {
+        std::slice::from_raw_parts(
+            res_tensor_descr.aligned_ptr() as *const f64,
+            res_tensor_descr.num_elements(),
+        )
+    };
+
+    assert_eq!(res_slice, &[17.0; 16]);
 }

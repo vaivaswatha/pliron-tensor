@@ -6,7 +6,7 @@ use pliron::{
         op_interfaces::{
             CallOpCallable, OneRegionInterface, OneResultInterface, SymbolOpInterface,
         },
-        type_interfaces::FunctionTypeInterface,
+        type_interfaces::{FloatTypeInterface, FunctionTypeInterface},
         types::Signedness,
     },
     context::{Context, Ptr},
@@ -24,7 +24,7 @@ use pliron::{
     region::Region,
     result::Result,
     symbol_table::{SymbolTableCollection, nearest_symbol_table},
-    r#type::{TypeObj, TypePtr, Typed, type_cast},
+    r#type::{TypeObj, TypePtr, Typed, type_cast, type_impls},
     value::Value,
 };
 use pliron_common_dialects::{
@@ -33,9 +33,9 @@ use pliron_common_dialects::{
 };
 use pliron_llvm::{
     ToLLVMType, ToLLVMTypeFn,
-    attributes::IntegerOverflowFlagsAttr,
+    attributes::{FastmathFlagsAttr, IntegerOverflowFlagsAttr},
     function_call_utils::{compute_type_size_in_bytes, lookup_or_create_malloc_fn},
-    op_interfaces::IntBinArithOpWithOverflowFlag,
+    op_interfaces::{FloatBinArithOpWithFastMathFlags, IntBinArithOpWithOverflowFlag},
     ops::{BrOp, CallOp, FuncOp, MulOp},
 };
 
@@ -292,7 +292,7 @@ trait BinaryMemrefOpToCF: BinaryMemrefOpInterface {
                 memref_result: Value,
                 memref_lhs: Value,
                 memref_rhs: Value,
-                op_fn: fn(&mut Context, Value, Value) -> Ptr<Operation>,
+                op_fn: fn(&mut Context, Value, Value, Ptr<TypeObj>) -> Ptr<Operation>,
                 elem_ty: Ptr<TypeObj>,
             }
             let mut state = State {
@@ -320,8 +320,12 @@ trait BinaryMemrefOpToCF: BinaryMemrefOpInterface {
                     rewriter.append_op(ctx, lhs_loaded);
                     rewriter.append_op(ctx, rhs_loaded);
 
-                    let result =
-                        (state.op_fn)(ctx, lhs_loaded.get_result(ctx), rhs_loaded.get_result(ctx));
+                    let result = (state.op_fn)(
+                        ctx,
+                        lhs_loaded.get_result(ctx),
+                        rhs_loaded.get_result(ctx),
+                        element_ty,
+                    );
                     rewriter.append_operation(ctx, result);
                     let result = result.deref(ctx).get_result(0);
 
@@ -337,19 +341,31 @@ trait BinaryMemrefOpToCF: BinaryMemrefOpInterface {
         Ok(())
     }
 
-    fn build_llvm_op(&self) -> fn(&mut Context, Value, Value) -> Ptr<Operation>;
+    fn build_llvm_op(&self) -> fn(&mut Context, Value, Value, Ptr<TypeObj>) -> Ptr<Operation>;
 }
 
 impl BinaryMemrefOpToCF for AddOp {
-    fn build_llvm_op(&self) -> fn(&mut Context, Value, Value) -> Ptr<Operation> {
-        |ctx, lhs, rhs| {
-            pliron_llvm::ops::AddOp::new_with_overflow_flag(
-                ctx,
-                lhs,
-                rhs,
-                IntegerOverflowFlagsAttr::default(),
-            )
-            .get_operation()
+    fn build_llvm_op(
+        &self,
+    ) -> fn(&mut Context, Value, Value, elem_ty: Ptr<TypeObj>) -> Ptr<Operation> {
+        |ctx, lhs, rhs, elem_ty| {
+            if type_impls::<dyn FloatTypeInterface>(&**elem_ty.deref(ctx)) {
+                pliron_llvm::ops::FAddOp::new_with_fast_math_flags(
+                    ctx,
+                    lhs,
+                    rhs,
+                    FastmathFlagsAttr::default(),
+                )
+                .get_operation()
+            } else {
+                pliron_llvm::ops::AddOp::new_with_overflow_flag(
+                    ctx,
+                    lhs,
+                    rhs,
+                    IntegerOverflowFlagsAttr::default(),
+                )
+                .get_operation()
+            }
         }
     }
 }
