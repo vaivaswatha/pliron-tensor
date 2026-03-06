@@ -7,7 +7,7 @@ use pliron::{
             CallOpCallable, OneRegionInterface, OneResultInterface, SymbolOpInterface,
         },
         type_interfaces::FunctionTypeInterface,
-        types::{IntegerType, Signedness},
+        types::Signedness,
     },
     context::{Context, Ptr},
     derive::{op_interface_impl, type_interface_impl},
@@ -293,6 +293,7 @@ trait BinaryMemrefOpToCF: BinaryMemrefOpInterface {
                 memref_lhs: Value,
                 memref_rhs: Value,
                 op_fn: fn(&mut Context, Value, Value) -> Ptr<Operation>,
+                elem_ty: Ptr<TypeObj>,
             }
             let mut state = State {
                 rewriter: scoped_rewriter,
@@ -300,6 +301,7 @@ trait BinaryMemrefOpToCF: BinaryMemrefOpInterface {
                 memref_lhs: self.get_lhs_memref(ctx),
                 memref_rhs: self.get_rhs_memref(ctx),
                 op_fn: self.build_llvm_op(),
+                elem_ty: self.get_element_type(ctx),
             };
             NDForOp::new(
                 ctx,
@@ -310,8 +312,7 @@ trait BinaryMemrefOpToCF: BinaryMemrefOpInterface {
                     let rewriter = &mut state.rewriter;
                     rewriter.set_insertion_point(inserter.get_insertion_point());
 
-                    // TODO: How to get element type when the operands have been lowered already?
-                    let element_ty = IntegerType::get(ctx, 64, Signedness::Signless).into();
+                    let element_ty = state.elem_ty;
                     let lhs_loaded =
                         LoadOp::new(ctx, element_ty, state.memref_lhs, indices.clone());
                     let rhs_loaded =

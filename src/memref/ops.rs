@@ -603,7 +603,13 @@ pub struct AddOp;
 
 impl AddOp {
     /// Create a new `AddOp` with the specified operands.
-    pub fn new(ctx: &mut Context, res: Value, lhs: Value, rhs: Value) -> Self {
+    pub fn new(
+        ctx: &mut Context,
+        res: Value,
+        lhs: Value,
+        rhs: Value,
+        elem_ty: Ptr<TypeObj>,
+    ) -> Self {
         let op = Operation::new(
             ctx,
             Self::get_concrete_op_info(),
@@ -612,6 +618,8 @@ impl AddOp {
             vec![],
             0,
         );
-        Self { op }
+        let add_op = Self { op };
+        add_op.set_element_type(ctx, elem_ty);
+        add_op
     }
 }

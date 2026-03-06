@@ -3,15 +3,19 @@
 use std::cell::Ref;
 
 use pliron::{
-    builtin::op_interfaces::{
-        AllOperandsOfType, AllResultsOfType, NOpdsInterface, NResultsInterface, OneOpdInterface,
-        SingleBlockRegionInterface,
+    builtin::{
+        attributes::TypeAttr,
+        op_interfaces::{
+            AllOperandsOfType, AllResultsOfType, NOpdsInterface, NResultsInterface,
+            OneOpdInterface, SingleBlockRegionInterface,
+        },
     },
-    context::Context,
+    context::{Context, Ptr},
     derive::op_interface,
+    dict_key,
     op::{Op, op_cast},
     result::Result,
-    r#type::{Typed, type_cast},
+    r#type::{TypeObj, Typed, type_cast},
     value::Value,
     verify_err,
 };
@@ -170,6 +174,15 @@ pub trait CompatibleShapesOp<T: ShapedType>: AllResultsOfType<T> + AllOperandsOf
     }
 }
 
+// TODO: This shouldn't be needed as the types of the operands and
+// results should be sufficient to determine the element type, but
+// without a proper dialect conversion framework, it may be unavailable.
+dict_key!(
+    /// Attribute key for binary memref op element type.
+    ATTR_KEY_BINARY_MEMREF_OP_ELEMENT_TYPE,
+    "binary_memref_op_element_type"
+);
+
 /// Interface for binary arithmetic memref ops (e.g., AddOp).
 /// These ops must have exactly 3 operands, with the first operand
 /// being the result and the next two operands being the inputs.
@@ -195,10 +208,39 @@ pub trait BinaryMemrefOpInterface:
         self.get_operation().deref(ctx).get_operand(2)
     }
 
-    fn verify(_op: &dyn Op, _ctx: &Context) -> Result<()>
+    /// Get the element type of the memrefs, which is stored as an attribute.
+    fn get_element_type(&self, ctx: &Context) -> Ptr<TypeObj> {
+        self.get_operation()
+            .deref(ctx)
+            .attributes
+            .get::<TypeAttr>(&ATTR_KEY_BINARY_MEMREF_OP_ELEMENT_TYPE)
+            .expect("Binary memref op must have element type attribute")
+            .get_type(ctx)
+    }
+
+    /// Set the element type of the memrefs, which is stored as an attribute.
+    fn set_element_type(&self, ctx: &Context, elem_type: Ptr<TypeObj>) {
+        self.get_operation().deref_mut(ctx).attributes.set(
+            ATTR_KEY_BINARY_MEMREF_OP_ELEMENT_TYPE.clone(),
+            TypeAttr::new(elem_type),
+        );
+    }
+
+    fn verify(op: &dyn Op, ctx: &Context) -> Result<()>
     where
         Self: Sized,
     {
+        let self_op = op.get_operation().deref(ctx);
+        if self_op
+            .attributes
+            .get::<TypeAttr>(&ATTR_KEY_BINARY_MEMREF_OP_ELEMENT_TYPE)
+            .is_none()
+        {
+            return verify_err!(
+                op.loc(ctx),
+                "Binary memref op must have element type attribute"
+            );
+        }
         Ok(())
     }
 }

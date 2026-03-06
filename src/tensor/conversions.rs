@@ -19,7 +19,7 @@ use pliron::{
     operation::Operation,
     region::Region,
     result::Result,
-    r#type::{TypePtr, Typed, type_cast},
+    r#type::{TypeObj, TypePtr, Typed, type_cast},
     value::Value,
 };
 use pliron_common_dialects::cf::op_interfaces::YieldingRegion;
@@ -203,7 +203,7 @@ trait BinaryTensorOpToMemref: BinaryTensorOpInterface {
 
         let alloc = AllocOp::new(ctx, result_ty, dynamic_dim_operands);
         rewriter.append_op(ctx, alloc);
-        let add = self.build_memref_op(ctx, alloc.get_result(ctx), lhs, rhs);
+        let add = self.build_memref_op(ctx, alloc.get_result(ctx), lhs, rhs, elem_ty);
         rewriter.append_operation(ctx, add);
         rewriter.replace_operation(ctx, self.get_operation(), alloc.get_operation());
         Ok(())
@@ -215,6 +215,7 @@ trait BinaryTensorOpToMemref: BinaryTensorOpInterface {
         res: Value,
         lhs: Value,
         rhs: Value,
+        elem_ty: Ptr<TypeObj>,
     ) -> Ptr<Operation>;
 }
 
@@ -225,8 +226,9 @@ impl BinaryTensorOpToMemref for AddOp {
         res: Value,
         lhs: Value,
         rhs: Value,
+        elem_ty: Ptr<TypeObj>,
     ) -> Ptr<Operation> {
-        memref::ops::AddOp::new(ctx, res, lhs, rhs).get_operation()
+        memref::ops::AddOp::new(ctx, res, lhs, rhs, elem_ty).get_operation()
     }
 }
 
